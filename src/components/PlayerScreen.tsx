@@ -6,6 +6,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { createVideoPlayer, VideoView } from 'expo-video';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Path, Rect } from 'react-native-svg';
 
 import { formatDuration } from '../lib/format';
 import { getSavedPlaybackPosition, savePlaybackDuration, savePlaybackPosition } from '../lib/playbackState';
@@ -255,7 +256,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
                 <Text style={styles.transportButtonText}>-10</Text>
               </Pressable>
               <Pressable onPress={handleTogglePlayback} style={({ pressed }) => [styles.playPauseButton, pressed && styles.closeButtonPressed]}>
-                <Text style={styles.transportButtonText}>{isPlaying ? 'Pause' : 'Play'}</Text>
+                {isPlaying ? <PauseIcon /> : <PlayIcon />}
               </Pressable>
               <Pressable onPress={() => handleSeek(10)} style={({ pressed }) => [styles.transportButton, pressed && styles.closeButtonPressed]}>
                 <Text style={styles.transportButtonText}>+10</Text>
@@ -289,6 +290,23 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         <Pressable onPress={handleToggleControls} style={styles.showTapArea} />
       )}
     </View>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <Svg width={20} height={20} viewBox="0 0 20 20" fill="none">
+      <Path d="M6 4.5L15 10L6 15.5V4.5Z" fill="#FFFFFF" />
+    </Svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <Svg width={20} height={20} viewBox="0 0 20 20" fill="none">
+      <Rect x="5" y="4" width="3.5" height="12" rx="1" fill="#FFFFFF" />
+      <Rect x="11.5" y="4" width="3.5" height="12" rx="1" fill="#FFFFFF" />
+    </Svg>
   );
 }
 
