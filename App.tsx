@@ -808,12 +808,6 @@ function UploadView({
 
   return (
     <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
-      {isAndroidTablet && (
-        <View style={styles.inlineHintWrap}>
-          {isAndroidTablet ? <Text style={styles.inlineHint}>Android tablet detected: the app remains in landscape.</Text> : null}
-        </View>
-      )}
-
       <Panel title="HTTP upload server" subtitle="Keep this tab open while sending files from your computer.">
         <Text style={styles.serverStatusLabel}>{serverRunning ? 'Server is running' : 'Server is stopped'}</Text>
         <Text style={styles.serverUrl}>{serverDisplayUrl}</Text>
@@ -946,14 +940,6 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: '#efe7db',
-  },
-  inlineHintWrap: {
-    gap: 6,
-  },
-  inlineHint: {
-    color: '#6c6259',
-    fontSize: 12,
-    lineHeight: 17,
   },
   contentArea: {
     flex: 1,

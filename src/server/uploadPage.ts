@@ -4,7 +4,6 @@ type UploadPageOptions = {
 };
 
 export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOptions): string {
-  const supportedList = supportedExtensions.join(', ');
   const acceptList = ['video/*', ...supportedExtensions].join(',');
   const supportedExtensionsJson = JSON.stringify(supportedExtensions);
 
@@ -90,7 +89,6 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         color: var(--muted);
       }
 
-      .hero,
       .panel {
         background: var(--panel);
         border: 1px solid var(--line);
@@ -99,47 +97,10 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         backdrop-filter: blur(14px);
       }
 
-      .hero {
-        padding: 28px;
-      }
-
-      .eyebrow {
-        display: inline-flex;
-        padding: 7px 12px;
-        border-radius: 999px;
-        background: rgba(31, 111, 104, 0.12);
-        color: var(--highlight);
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      h1 {
-        margin: 14px 0 10px;
-        font-size: clamp(30px, 5vw, 48px);
-        line-height: 0.98;
-      }
-
       p {
         margin: 0;
         color: var(--muted);
         line-height: 1.6;
-      }
-
-      .meta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 18px;
-      }
-
-      .pill {
-        padding: 10px 14px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.7);
-        border: 1px solid var(--line);
-        font-size: 14px;
       }
 
       .panel {
@@ -166,30 +127,6 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
       .button:disabled {
         cursor: wait;
         opacity: 0.7;
-      }
-
-      .steps {
-        display: grid;
-        gap: 12px;
-        margin-top: 16px;
-      }
-
-      .step {
-        display: grid;
-        grid-template-columns: 34px 1fr;
-        gap: 12px;
-        align-items: start;
-      }
-
-      .step-number {
-        width: 34px;
-        height: 34px;
-        border-radius: 50%;
-        display: grid;
-        place-items: center;
-        background: rgba(198, 103, 61, 0.12);
-        color: var(--accent-strong);
-        font-weight: 700;
       }
 
       .queue {
@@ -263,7 +200,6 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
           padding: 16px;
         }
 
-        .hero,
         .panel {
           border-radius: 20px;
         }
@@ -278,23 +214,10 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
   </head>
   <body>
     <main>
-      <section class="hero">
-        <span class="eyebrow">Phone upload portal</span>
-        <h1>Drop videos straight onto your Android device.</h1>
-        <p>
-          This page talks directly to the VPlayer app running on your phone. Select one or more
-          video files and the app stores them locally so you can play them offline.
-        </p>
-        <div class="meta">
-          <div class="pill">Server: <strong id="server-origin"></strong></div>
-          <div class="pill">Chunk size: ${Math.round(chunkSize / 1024)} KB</div>
-          <div class="pill">Formats: ${supportedList}</div>
-        </div>
-      </section>
-
       <section class="panel">
         <h2>Upload files</h2>
         <p>Keep this page open until the progress reaches 100% and the app confirms the file is saved. You can also drag files anywhere onto this page.</p>
+        <p style="margin-top: 10px;">Server: <strong id="server-origin"></strong></p>
         <div style="margin-top: 18px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
           <button class="button" id="pick-button" type="button">Choose videos</button>
           <span class="empty" id="picker-state">Ready for new uploads.</span>
@@ -302,24 +225,6 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         <input id="file-input" type="file" accept="${acceptList}" multiple hidden />
         <div class="queue" id="queue">
           <div class="empty">No uploads yet.</div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2>How it works</h2>
-        <div class="steps">
-          <div class="step">
-            <div class="step-number">1</div>
-            <p>Make sure your phone and computer are on the same Wi-Fi network.</p>
-          </div>
-          <div class="step">
-            <div class="step-number">2</div>
-            <p>Choose videos here. The browser sends them in chunks to <code>/upload/*</code>.</p>
-          </div>
-          <div class="step">
-            <div class="step-number">3</div>
-            <p>Open the Library tab in the app and tap any uploaded video to play it in landscape.</p>
-          </div>
         </div>
       </section>
     </main>
