@@ -600,8 +600,6 @@ export default function App() {
                 serverRunning={serverRunning}
                 serverUrl={serverUrl}
                 setPortInput={setPortInput}
-                storage={storage}
-                videoCount={videos.length}
               />
             )}
           </View>
@@ -790,8 +788,6 @@ type UploadViewProps = {
   serverRunning: boolean;
   serverUrl: string | null;
   setPortInput: (value: string) => void;
-  storage: StorageSnapshot | null;
-  videoCount: number;
 };
 
 function UploadView({
@@ -806,8 +802,6 @@ function UploadView({
   serverRunning,
   serverUrl,
   setPortInput,
-  storage,
-  videoCount,
 }: UploadViewProps) {
   const serverDisplayUrl = serverUrl ?? (serverRunning ? 'Server is running. Discovering device IP...' : 'Server is stopped');
   const networkStatusText = serverRunning && !serverUrl ? 'The upload server is already running. The app is retrying local IP detection now.' : networkHint;
@@ -819,12 +813,6 @@ function UploadView({
           {isAndroidTablet ? <Text style={styles.inlineHint}>Android tablet detected: the app remains in landscape.</Text> : null}
         </View>
       )}
-
-      <View style={styles.quickStatsRow}>
-        <QuickStat label="Videos" value={String(videoCount)} />
-        <QuickStat label="Free" value={storage ? formatBytes(storage.freeBytes) : '--'} />
-        <QuickStat label="Port" value={String(currentPort)} />
-      </View>
 
       <Panel title="HTTP upload server" subtitle="Keep this tab open while sending files from your computer.">
         <Text style={styles.serverStatusLabel}>{serverRunning ? 'Server is running' : 'Server is stopped'}</Text>
@@ -876,15 +864,6 @@ function UploadView({
           </Text>
         </View>
       </Panel>
-
-      <Panel title="Desktop steps" subtitle="Quick flow for sending videos from your Mac or PC.">
-        <View style={styles.stepsList}>
-          <StepRow number="1" text="Join the same Wi-Fi network on the phone and computer." />
-          <StepRow number="2" text="Open the shown address in a browser on the computer." />
-          <StepRow number="3" text="Choose one or more videos and wait for the save confirmation." />
-          <StepRow number="4" text="Switch back to Library and tap a video. The player continues into the next file automatically." />
-        </View>
-      </Panel>
     </ScrollView>
   );
 }
@@ -916,20 +895,6 @@ function BottomTabButton({ active, label, onPress }: BottomTabButtonProps) {
     <Pressable onPress={onPress} style={({ pressed }) => [styles.bottomTabButton, active && styles.bottomTabButtonActive, pressed && styles.bottomTabButtonPressed]}>
       <Text style={[styles.bottomTabText, active && styles.bottomTabTextActive]}>{label}</Text>
     </Pressable>
-  );
-}
-
-type QuickStatProps = {
-  label: string;
-  value: string;
-};
-
-function QuickStat({ label, value }: QuickStatProps) {
-  return (
-    <View style={styles.quickStat}>
-      <Text style={styles.quickStatLabel}>{label}</Text>
-      <Text style={styles.quickStatValue}>{value}</Text>
-    </View>
   );
 }
 
@@ -981,30 +946,6 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: '#efe7db',
-  },
-  quickStatsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  quickStat: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 16,
-    backgroundColor: '#e2d5c9',
-    minWidth: 92,
-  },
-  quickStatLabel: {
-    color: '#695f57',
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  quickStatValue: {
-    color: '#1d1917',
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 3,
   },
   inlineHintWrap: {
     gap: 6,
