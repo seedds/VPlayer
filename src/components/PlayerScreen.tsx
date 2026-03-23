@@ -396,8 +396,8 @@ const styles = StyleSheet.create({
   subtitleText: {
     color: '#fff',
     maxWidth: '92%',
-    fontSize: 24,
-    lineHeight: 32,
+    fontSize: 36,
+    lineHeight: 44,
     fontWeight: '800',
     textAlign: 'center',
     textShadowColor: 'rgba(0,0,0,0.92)',
