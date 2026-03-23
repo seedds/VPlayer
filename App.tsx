@@ -592,7 +592,6 @@ export default function App() {
                 activity={activity}
                 currentPort={currentPort}
                 isAndroidTablet={isAndroidTablet}
-                networkHint={networkHint}
                 onRestartServer={() => void startServer(normalizePort(portInput, DEFAULT_SERVER_PORT))}
                 onStopServer={() => void stopServer()}
                 portInput={portInput}
@@ -780,7 +779,6 @@ type UploadViewProps = {
   activity: UploadActivity;
   currentPort: number;
   isAndroidTablet: boolean;
-  networkHint: string;
   onRestartServer: () => void;
   onStopServer: () => void;
   portInput: string;
@@ -794,7 +792,6 @@ function UploadView({
   activity,
   currentPort,
   isAndroidTablet,
-  networkHint,
   onRestartServer,
   onStopServer,
   portInput,
@@ -804,14 +801,12 @@ function UploadView({
   setPortInput,
 }: UploadViewProps) {
   const serverDisplayUrl = serverUrl ?? (serverRunning ? 'Server is running. Discovering device IP...' : 'Server is stopped');
-  const networkStatusText = serverRunning && !serverUrl ? 'The upload server is already running. The app is retrying local IP detection now.' : networkHint;
 
   return (
     <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
       <Panel title="HTTP upload server" subtitle="Keep this tab open while sending files from your computer.">
         <Text style={styles.serverStatusLabel}>{serverRunning ? 'Server is running' : 'Server is stopped'}</Text>
         <Text style={styles.serverUrl}>{serverDisplayUrl}</Text>
-        <Text style={styles.supportText}>{networkStatusText}</Text>
 
         <View style={styles.portRow}>
           <View style={styles.portInputWrap}>
@@ -829,11 +824,6 @@ function UploadView({
             <ActionButton label={serverRunning ? 'Restart server' : 'Start server'} onPress={onRestartServer} tone="primary" />
             <ActionButton disabled={!serverRunning} label="Stop" onPress={onStopServer} tone="danger" />
           </View>
-        </View>
-
-        <View style={styles.uploadUrlCard}>
-          <Text style={styles.uploadUrlLabel}>Desktop address</Text>
-          <Text style={styles.uploadUrlValue}>{`http://<device-ip>:${currentPort}`}</Text>
         </View>
       </Panel>
 
@@ -1143,23 +1133,6 @@ const styles = StyleSheet.create({
     color: '#fff7f2',
     fontSize: 14,
     fontWeight: '700',
-  },
-  uploadUrlCard: {
-    borderRadius: 18,
-    padding: 14,
-    backgroundColor: '#f7ede1',
-  },
-  uploadUrlLabel: {
-    color: '#6f655c',
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  uploadUrlValue: {
-    color: '#1d1917',
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 4,
   },
   activityHeader: {
     gap: 6,
