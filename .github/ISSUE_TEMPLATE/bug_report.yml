@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible problem in VPlayer
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly and concisely.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Share the exact steps so the issue can be reproduced.
+      placeholder: |
+        1. Open the app
+        2. Go to ...
+        3. Tap ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Device and build info
+      description: Include Android version, device model, app build type, and any logs if available.
+      placeholder: |
+        Device:
+        Android version:
+        Build type:
+        Extra logs:
+    validations:
+      required: true
