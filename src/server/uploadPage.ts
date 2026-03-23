@@ -217,7 +217,6 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
       <section class="panel">
         <h2>Upload files</h2>
         <p>Keep this page open until the progress reaches 100% and the app confirms the file is saved. You can also drag files anywhere onto this page.</p>
-        <p style="margin-top: 10px;">Server: <strong id="server-origin"></strong></p>
         <div style="margin-top: 18px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
           <button class="button" id="pick-button" type="button">Choose videos</button>
           <span class="empty" id="picker-state">Ready for new uploads.</span>
@@ -242,11 +241,8 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
       const fileInput = document.getElementById('file-input');
       const queue = document.getElementById('queue');
       const pickerState = document.getElementById('picker-state');
-      const serverOrigin = document.getElementById('server-origin');
       const defaultChunkSize = ${chunkSize};
       let dragDepth = 0;
-
-      serverOrigin.textContent = window.location.origin;
 
       function setPickerState(text) {
         pickerState.textContent = text;
