@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 
 import { formatDuration } from '../lib/format';
-import type { VideoItem } from '../lib/types';
+import type { LibraryItem } from '../lib/types';
 
 type VideoCardProps = {
   durationSeconds?: number;
@@ -15,7 +15,7 @@ type VideoCardProps = {
   selected: boolean;
   selectionMode: boolean;
   thumbnailSource?: ImageProps['source'];
-  video: VideoItem;
+  video: LibraryItem;
 };
 
 export function VideoCard({
@@ -30,13 +30,15 @@ export function VideoCard({
   thumbnailSource,
   video,
 }: VideoCardProps) {
+  const isVideo = video.kind === 'video';
   const isPlayed =
+    isVideo &&
     typeof durationSeconds === 'number' &&
     durationSeconds > 0 &&
     typeof savedPositionSeconds === 'number' &&
     savedPositionSeconds / durationSeconds >= 0.95;
   const playbackProgress =
-    typeof durationSeconds === 'number' && durationSeconds > 0 && typeof savedPositionSeconds === 'number'
+    isVideo && typeof durationSeconds === 'number' && durationSeconds > 0 && typeof savedPositionSeconds === 'number'
       ? Math.max(0, Math.min(1, savedPositionSeconds / durationSeconds))
       : 0;
 
@@ -44,11 +46,11 @@ export function VideoCard({
     <View style={[styles.card, selected && styles.cardSelected]}>
       <Pressable onLongPress={onLongPress} onPress={onPlay} style={({ pressed }) => [styles.primaryAction, pressed && styles.primaryActionPressed]}>
         <View style={styles.thumbnailWrap}>
-          {thumbnailSource ? (
+          {isVideo && thumbnailSource ? (
             <Image contentFit="cover" source={thumbnailSource} style={styles.thumbnail} />
           ) : (
             <View style={styles.thumbnailPlaceholder}>
-              <Text style={styles.thumbnailPlaceholderText}>Video</Text>
+              <Text style={styles.thumbnailPlaceholderText}>{isVideo ? 'Video' : 'SRT'}</Text>
             </View>
           )}
 
@@ -64,7 +66,7 @@ export function VideoCard({
             {video.name}
           </Text>
           <Text numberOfLines={1} style={styles.meta}>
-            {formatDuration(savedPositionSeconds)} / {formatDuration(durationSeconds)}
+            {isVideo ? `${formatDuration(savedPositionSeconds)} / ${formatDuration(durationSeconds)}` : 'Subtitle file'}
           </Text>
         </View>
       </Pressable>
@@ -75,7 +77,7 @@ export function VideoCard({
         </View>
       ) : (
         <View style={styles.rowActions}>
-          {isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />}
+          {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
           <Pressable onPress={onDelete} style={({ pressed }) => [styles.deleteButton, pressed && styles.deleteButtonPressed]}>
             <Text style={styles.deleteLabel}>Delete</Text>
           </Pressable>

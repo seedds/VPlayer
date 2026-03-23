@@ -33,8 +33,8 @@ import {
   THUMBNAIL_MAX_WIDTH,
   THUMBNAIL_TIME_SECONDS,
 } from './src/lib/videoThumbnails';
-import type { StorageSnapshot, UploadActivity, VideoItem } from './src/lib/types';
-import { deleteVideo, ensureAppDirectories, getStorageSnapshot, listVideos } from './src/lib/videoLibrary';
+import type { LibraryItem, StorageSnapshot, UploadActivity, VideoItem } from './src/lib/types';
+import { deleteLibraryItem, ensureAppDirectories, getStorageSnapshot, getVideoItems, listLibraryItems } from './src/lib/videoLibrary';
 import { DEFAULT_SERVER_PORT, localUploadServer } from './src/server/localUploadServer';
 
 type ActiveTab = 'library' | 'upload';
@@ -50,7 +50,7 @@ const INITIAL_ACTIVITY: UploadActivity = {
 export default function App() {
   const { width, height } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState<ActiveTab>('library');
-  const [videos, setVideos] = useState<VideoItem[]>([]);
+  const [videos, setVideos] = useState<LibraryItem[]>([]);
   const [playbackStateByUri, setPlaybackStateByUri] = useState<PlaybackStateMap>({});
   const [thumbnailSourceByUri, setThumbnailSourceByUri] = useState<Record<string, ThumbnailSource | null | undefined>>({});
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -69,12 +69,13 @@ export default function App() {
   const progress = getUploadProgress(activity);
   const currentPort = useMemo(() => normalizePort(portInput, DEFAULT_SERVER_PORT), [portInput]);
   const serverUrl = serverRunning && ipAddress && activePort ? `http://${ipAddress}:${activePort}` : null;
-  const selectedVideo = selectedIndex !== null ? videos[selectedIndex] ?? null : null;
+  const videoItems = useMemo(() => getVideoItems(videos), [videos]);
+  const selectedVideo = selectedIndex !== null ? videoItems[selectedIndex] ?? null : null;
   const selectedCount = selectedVideoUris.size;
   const shouldKeepAwakeForUpload = activity.status === 'receiving';
 
   const refreshLibrary = useCallback(async () => {
-    const [items, snapshot, playbackState] = await Promise.all([listVideos(), getStorageSnapshot(), getAllPlaybackState()]);
+    const [items, snapshot, playbackState] = await Promise.all([listLibraryItems(), getStorageSnapshot(), getAllPlaybackState()]);
     setVideos(items);
     setStorage(snapshot);
     setPlaybackStateByUri(playbackState);
@@ -262,10 +263,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (selectedIndex !== null && selectedIndex >= videos.length) {
-      setSelectedIndex(videos.length > 0 ? videos.length - 1 : null);
+    if (selectedIndex !== null && selectedIndex >= videoItems.length) {
+      setSelectedIndex(videoItems.length > 0 ? videoItems.length - 1 : null);
     }
-  }, [selectedIndex, videos.length]);
+  }, [selectedIndex, videoItems.length]);
 
   useEffect(() => {
     setSelectedVideoUris((current) => {
@@ -341,8 +342,8 @@ export default function App() {
   }, [refreshLibrary, refreshNetwork, startServer]);
 
   const handleDeleteVideo = useCallback(
-    (video: VideoItem) => {
-      Alert.alert('Delete video?', video.name, [
+    (video: LibraryItem) => {
+      Alert.alert('Delete file?', video.name, [
         {
           text: 'Cancel',
           style: 'cancel',
@@ -353,17 +354,20 @@ export default function App() {
           onPress: () => {
             void (async () => {
               try {
-                await clearPlaybackPosition(video.uri);
-                await deleteThumbnailForVideo(video);
-                await deleteVideo(video.uri);
-                setThumbnailSourceByUri((current) => {
-                  const next = { ...current };
-                  delete next[video.uri];
-                  return next;
-                });
+                if (video.kind === 'video') {
+                  await clearPlaybackPosition(video.uri);
+                  await deleteThumbnailForVideo(video);
+                  setThumbnailSourceByUri((current) => {
+                    const next = { ...current };
+                    delete next[video.uri];
+                    return next;
+                  });
+                }
+
+                await deleteLibraryItem(video.uri);
                 await refreshLibrary();
               } catch (error) {
-                Alert.alert('Delete failed', error instanceof Error ? error.message : 'Could not delete the video.');
+                Alert.alert('Delete failed', error instanceof Error ? error.message : 'Could not delete the file.');
               }
             })();
           },
@@ -373,9 +377,16 @@ export default function App() {
     [refreshLibrary],
   );
 
-  const handlePlayVideo = useCallback((index: number) => {
-    setSelectedIndex(index);
-  }, []);
+  const handlePlayVideo = useCallback(
+    (uri: string) => {
+      const index = videoItems.findIndex((video) => video.uri === uri);
+
+      if (index >= 0) {
+        setSelectedIndex(index);
+      }
+    },
+    [videoItems],
+  );
 
   useEffect(() => {
     if (!loading && activeTab === 'library') {
@@ -388,20 +399,20 @@ export default function App() {
       return;
     }
 
-    void hydrateMissingDurations(videos, playbackStateByUri);
-  }, [activeTab, hydrateMissingDurations, loading, playbackStateByUri, videos]);
+    void hydrateMissingDurations(videoItems, playbackStateByUri);
+  }, [activeTab, hydrateMissingDurations, loading, playbackStateByUri, videoItems]);
 
   useEffect(() => {
-    if (loading || activeTab !== 'library' || videos.length === 0) {
+    if (loading || activeTab !== 'library' || videoItems.length === 0) {
       return;
     }
 
     let cancelled = false;
 
     async function hydrateMissingThumbnails() {
-      await pruneThumbnailCache(videos);
+      await pruneThumbnailCache(videoItems);
 
-      for (const video of videos) {
+      for (const video of videoItems) {
         if (cancelled || thumbnailSourceByUri[video.uri] !== undefined) {
           continue;
         }
@@ -462,7 +473,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, loading, playbackStateByUri, thumbnailSourceByUri, videos]);
+  }, [activeTab, loading, playbackStateByUri, thumbnailSourceByUri, videoItems]);
 
   useEffect(() => {
     if (!loading && activeTab === 'upload') {
@@ -515,7 +526,7 @@ export default function App() {
           exitOrientationLock={
             isAndroidTablet ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP
           }
-          videos={videos}
+          videos={videoItems}
           onClose={() => {
             setSelectedIndex(null);
             void refreshLibrary();
@@ -622,7 +633,7 @@ export default function App() {
                       return;
                     }
 
-                    Alert.alert('Delete selected videos?', `${selectedCount} file${selectedCount === 1 ? '' : 's'} will be removed.`, [
+                    Alert.alert('Delete selected files?', `${selectedCount} file${selectedCount === 1 ? '' : 's'} will be removed.`, [
                       {
                         text: 'Cancel',
                         style: 'cancel',
@@ -637,9 +648,12 @@ export default function App() {
 
                               await Promise.all(
                                 targets.map(async (video) => {
-                                  await clearPlaybackPosition(video.uri);
-                                  await deleteThumbnailForVideo(video);
-                                  await deleteVideo(video.uri);
+                                  if (video.kind === 'video') {
+                                    await clearPlaybackPosition(video.uri);
+                                    await deleteThumbnailForVideo(video);
+                                  }
+
+                                  await deleteLibraryItem(video.uri);
                                 }),
                               );
 
@@ -647,7 +661,9 @@ export default function App() {
                                 const next = { ...current };
 
                                 for (const video of targets) {
-                                  delete next[video.uri];
+                                  if (video.kind === 'video') {
+                                    delete next[video.uri];
+                                  }
                                 }
 
                                 return next;
@@ -657,7 +673,7 @@ export default function App() {
                               setSelectedVideoUris(new Set());
                               await refreshLibrary();
                             } catch (error) {
-                              Alert.alert('Delete failed', error instanceof Error ? error.message : 'Could not delete the selected videos.');
+                              Alert.alert('Delete failed', error instanceof Error ? error.message : 'Could not delete the selected files.');
                             }
                           })();
                         },
@@ -702,11 +718,11 @@ type LibraryViewProps = {
   selectedVideoUris: Set<string>;
   selectionMode: boolean;
   thumbnailSourceByUri: Record<string, ThumbnailSource | null | undefined>;
-  videos: VideoItem[];
-  onDeleteVideo: (video: VideoItem) => void;
-  onLongPressVideo: (video: VideoItem) => void;
-  onPlayVideo: (index: number) => void;
-  onToggleVideoSelection: (video: VideoItem) => void;
+  videos: LibraryItem[];
+  onDeleteVideo: (video: LibraryItem) => void;
+  onLongPressVideo: (video: LibraryItem) => void;
+  onPlayVideo: (uri: string) => void;
+  onToggleVideoSelection: (video: LibraryItem) => void;
 };
 
 function LibraryView({
@@ -724,7 +740,7 @@ function LibraryView({
   if (videos.length === 0) {
     return (
       <View style={styles.emptyState}>
-        <Text style={styles.emptyStateTitle}>No videos yet</Text>
+        <Text style={styles.emptyStateTitle}>No media yet</Text>
         <Text style={styles.emptyStateText}>Use the Upload tab at the bottom, open the device URL on your computer, and send a file here.</Text>
       </View>
     );
@@ -741,15 +757,15 @@ function LibraryView({
       ) : null}
 
       <ScrollView contentContainerStyle={styles.libraryList} showsVerticalScrollIndicator={false}>
-        {videos.map((video, index) => (
+        {videos.map((video) => (
           <VideoCard
             key={video.id}
-            durationSeconds={playbackStateByUri[video.uri]?.durationSeconds}
-            isNew={playbackStateByUri[video.uri]?.hasStartedPlayback !== true}
+            durationSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.durationSeconds : undefined}
+            isNew={video.kind === 'video' ? playbackStateByUri[video.uri]?.hasStartedPlayback !== true : false}
             selected={selectedVideoUris.has(video.uri)}
             selectionMode={selectionMode}
-            savedPositionSeconds={playbackStateByUri[video.uri]?.positionSeconds ?? 0}
-            thumbnailSource={thumbnailSourceByUri[video.uri]}
+            savedPositionSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.positionSeconds ?? 0 : undefined}
+            thumbnailSource={video.kind === 'video' ? thumbnailSourceByUri[video.uri] : undefined}
             video={video}
             onLongPress={() => {
               if (selectionMode) {
@@ -766,7 +782,9 @@ function LibraryView({
                 return;
               }
 
-              onPlayVideo(index);
+              if (video.kind === 'video') {
+                onPlayVideo(video.uri);
+              }
             }}
           />
         ))}

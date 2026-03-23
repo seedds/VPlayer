@@ -1,8 +1,10 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import type { StorageSnapshot, VideoItem } from './types';
+import type { LibraryItem, StorageSnapshot, VideoItem } from './types';
 
 export const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm', '.mkv'];
+export const ALLOWED_SUBTITLE_EXTENSIONS = ['.srt'];
+export const ALLOWED_UPLOAD_EXTENSIONS = [...ALLOWED_VIDEO_EXTENSIONS, ...ALLOWED_SUBTITLE_EXTENSIONS];
 
 function getDocumentRoot(): string {
   if (!FileSystem.documentDirectory) {
@@ -27,6 +29,14 @@ export function getFileExtension(fileName: string): string {
 
 export function isAllowedVideoFileName(fileName: string): boolean {
   return ALLOWED_VIDEO_EXTENSIONS.includes(getFileExtension(fileName));
+}
+
+export function isAllowedSubtitleFileName(fileName: string): boolean {
+  return ALLOWED_SUBTITLE_EXTENSIONS.includes(getFileExtension(fileName));
+}
+
+export function isAllowedLibraryFileName(fileName: string): boolean {
+  return isAllowedVideoFileName(fileName) || isAllowedSubtitleFileName(fileName);
 }
 
 export async function ensureAppDirectories(): Promise<void> {
@@ -64,8 +74,8 @@ export async function createUploadTarget(fileName: string): Promise<{
 
   const sanitized = sanitizeFileName(fileName);
 
-  if (!isAllowedVideoFileName(sanitized)) {
-    throw new Error(`Unsupported video type. Use ${ALLOWED_VIDEO_EXTENSIONS.join(', ')}`);
+  if (!isAllowedLibraryFileName(sanitized)) {
+    throw new Error(`Unsupported file type. Use ${ALLOWED_UPLOAD_EXTENSIONS.join(', ')}`);
   }
 
   const extension = getFileExtension(sanitized);
@@ -92,12 +102,12 @@ export async function createUploadTarget(fileName: string): Promise<{
   }
 }
 
-export async function listVideos(): Promise<VideoItem[]> {
+export async function listLibraryItems(): Promise<LibraryItem[]> {
   await ensureAppDirectories();
 
   const entries = await FileSystem.readDirectoryAsync(getVideoDirectory());
-  const videos = await Promise.all(
-    entries.filter(isAllowedVideoFileName).map(async (entry) => {
+  const items = await Promise.all(
+    entries.filter(isAllowedLibraryFileName).map(async (entry) => {
       const uri = `${getVideoDirectory()}${entry}`;
       const info = await FileSystem.getInfoAsync(uri);
 
@@ -107,21 +117,26 @@ export async function listVideos(): Promise<VideoItem[]> {
 
       return {
         id: uri,
+        kind: isAllowedSubtitleFileName(entry) ? 'subtitle' : 'video',
         name: entry,
         uri,
         size: info.size ?? 0,
         modified: info.modificationTime ? info.modificationTime * 1000 : Date.now(),
         extension: getFileExtension(entry),
-      } satisfies VideoItem;
+      } satisfies LibraryItem;
     }),
   );
 
-  return videos
-    .filter((item): item is VideoItem => item !== null)
+  return items
+    .filter((item): item is LibraryItem => item !== null)
     .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
-export async function deleteVideo(uri: string): Promise<void> {
+export function getVideoItems(items: LibraryItem[]): VideoItem[] {
+  return items.filter((item): item is VideoItem => item.kind === 'video');
+}
+
+export async function deleteLibraryItem(uri: string): Promise<void> {
   await FileSystem.deleteAsync(uri, { idempotent: true });
 }
 
