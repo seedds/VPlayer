@@ -22,6 +22,17 @@ type PlayerScreenProps = {
   videos: VideoItem[];
 };
 
+const SUBTITLE_OUTLINE_OFFSETS = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+  [-1, -1],
+  [1, -1],
+  [-1, 1],
+  [1, 1],
+] as const;
+
 export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSelectIndex, videos }: PlayerScreenProps) {
   const insets = useSafeAreaInsets();
   const video = videos[currentIndex];
@@ -285,7 +296,21 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
             },
           ]}
         >
-          <Text style={styles.subtitleText}>{activeSubtitleText}</Text>
+          <View style={styles.subtitleStack}>
+            {SUBTITLE_OUTLINE_OFFSETS.map(([translateX, translateY], index) => (
+              <Text
+                key={`${translateX},${translateY},${index}`}
+                style={[
+                  styles.subtitleText,
+                  styles.subtitleOutline,
+                  { transform: [{ translateX }, { translateY }] },
+                ]}
+              >
+                {activeSubtitleText}
+              </Text>
+            ))}
+            <Text style={styles.subtitleText}>{activeSubtitleText}</Text>
+          </View>
         </View>
       ) : null}
 
@@ -393,16 +418,24 @@ const styles = StyleSheet.create({
     right: 18,
     alignItems: 'center',
   },
-  subtitleText: {
-    color: '#fff',
+  subtitleStack: {
+    position: 'relative',
     maxWidth: '92%',
+    alignItems: 'center',
+  },
+  subtitleText: {
+    color: '#F2F2F2',
     fontSize: 36,
     lineHeight: 44,
     fontWeight: '800',
     textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.92)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
+  },
+  subtitleOutline: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    color: '#000',
   },
   dismissTapArea: {
     ...StyleSheet.absoluteFillObject,
