@@ -285,9 +285,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
             },
           ]}
         >
-          <View style={styles.subtitleBubble}>
-            <Text style={styles.subtitleText}>{activeSubtitleText}</Text>
-          </View>
+          <Text style={styles.subtitleText}>{activeSubtitleText}</Text>
         </View>
       ) : null}
 
@@ -395,19 +393,16 @@ const styles = StyleSheet.create({
     right: 18,
     alignItems: 'center',
   },
-  subtitleBubble: {
-    maxWidth: '92%',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: 'rgba(0,0,0,0.72)',
-  },
   subtitleText: {
     color: '#fff',
-    fontSize: 18,
-    lineHeight: 25,
-    fontWeight: '700',
+    maxWidth: '92%',
+    fontSize: 24,
+    lineHeight: 32,
+    fontWeight: '800',
     textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.92)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
   },
   dismissTapArea: {
     ...StyleSheet.absoluteFillObject,
