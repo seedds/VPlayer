@@ -737,6 +737,10 @@ function LibraryView({
   onPlayVideo,
   onToggleVideoSelection,
 }: LibraryViewProps) {
+  function getBaseName(name: string): string {
+    return name.replace(/\.[^.]+$/, '').toLocaleLowerCase();
+  }
+
   if (videos.length === 0) {
     return (
       <View style={styles.emptyState}>
@@ -784,6 +788,15 @@ function LibraryView({
 
               if (video.kind === 'video') {
                 onPlayVideo(video.uri);
+                return;
+              }
+
+              const matchingVideo = videos.find(
+                (item): item is VideoItem => item.kind === 'video' && getBaseName(item.name) === getBaseName(video.name),
+              );
+
+              if (matchingVideo) {
+                onPlayVideo(matchingVideo.uri);
               }
             }}
           />
