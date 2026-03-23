@@ -388,6 +388,63 @@ export default function App() {
     [videoItems],
   );
 
+  const handleCancelSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedVideoUris(new Set());
+  }, []);
+
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedCount === 0) {
+      return;
+    }
+
+    Alert.alert('Delete selected files?', `${selectedCount} file${selectedCount === 1 ? '' : 's'} will be removed.`, [
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            try {
+              const targets = videos.filter((video) => selectedVideoUris.has(video.uri));
+
+              await Promise.all(
+                targets.map(async (video) => {
+                  if (video.kind === 'video') {
+                    await clearPlaybackPosition(video.uri);
+                    await deleteThumbnailForVideo(video);
+                  }
+
+                  await deleteLibraryItem(video.uri);
+                }),
+              );
+
+              setThumbnailSourceByUri((current) => {
+                const next = { ...current };
+
+                for (const video of targets) {
+                  if (video.kind === 'video') {
+                    delete next[video.uri];
+                  }
+                }
+
+                return next;
+              });
+
+              handleCancelSelection();
+              await refreshLibrary();
+            } catch (error) {
+              Alert.alert('Delete failed', error instanceof Error ? error.message : 'Could not delete the selected files.');
+            }
+          })();
+        },
+      },
+    ]);
+  }, [handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
+
   useEffect(() => {
     if (!loading && activeTab === 'library') {
       void refreshLibrary();
@@ -574,9 +631,12 @@ export default function App() {
                   ]);
                 }}
                 playbackStateByUri={playbackStateByUri}
+                selectedCount={selectedCount}
                 selectedVideoUris={selectedVideoUris}
                 selectionMode={selectionMode}
                 thumbnailSourceByUri={thumbnailSourceByUri}
+                onCancelSelection={handleCancelSelection}
+                onDeleteSelected={handleDeleteSelected}
                 videos={videos}
                 onDeleteVideo={handleDeleteVideo}
                 onLongPressVideo={(video) => {
@@ -614,80 +674,6 @@ export default function App() {
             )}
           </View>
 
-          {selectionMode ? (
-            <View style={styles.selectionBar}>
-              <Text style={styles.selectionCount}>{selectedCount} selected</Text>
-              <View style={styles.selectionActions}>
-                <Pressable
-                  onPress={() => {
-                    setSelectionMode(false);
-                    setSelectedVideoUris(new Set());
-                  }}
-                  style={({ pressed }) => [styles.selectionButton, styles.selectionButtonSecondary, pressed && styles.selectionButtonPressed]}
-                >
-                  <Text style={styles.selectionButtonSecondaryText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    if (selectedCount === 0) {
-                      return;
-                    }
-
-                    Alert.alert('Delete selected files?', `${selectedCount} file${selectedCount === 1 ? '' : 's'} will be removed.`, [
-                      {
-                        text: 'Cancel',
-                        style: 'cancel',
-                      },
-                      {
-                        text: 'Delete',
-                        style: 'destructive',
-                        onPress: () => {
-                          void (async () => {
-                            try {
-                              const targets = videos.filter((video) => selectedVideoUris.has(video.uri));
-
-                              await Promise.all(
-                                targets.map(async (video) => {
-                                  if (video.kind === 'video') {
-                                    await clearPlaybackPosition(video.uri);
-                                    await deleteThumbnailForVideo(video);
-                                  }
-
-                                  await deleteLibraryItem(video.uri);
-                                }),
-                              );
-
-                              setThumbnailSourceByUri((current) => {
-                                const next = { ...current };
-
-                                for (const video of targets) {
-                                  if (video.kind === 'video') {
-                                    delete next[video.uri];
-                                  }
-                                }
-
-                                return next;
-                              });
-
-                              setSelectionMode(false);
-                              setSelectedVideoUris(new Set());
-                              await refreshLibrary();
-                            } catch (error) {
-                              Alert.alert('Delete failed', error instanceof Error ? error.message : 'Could not delete the selected files.');
-                            }
-                          })();
-                        },
-                      },
-                    ]);
-                  }}
-                  style={({ pressed }) => [styles.selectionButton, styles.selectionButtonDanger, pressed && styles.selectionButtonPressed]}
-                >
-                  <Text style={styles.selectionButtonDangerText}>Delete</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : null}
-
           <View style={styles.bottomTabBar}>
             <BottomTabButton active={activeTab === 'library'} label="Library" onPress={() => setActiveTab('library')} />
             <BottomTabButton
@@ -713,8 +699,11 @@ function UploadWakeLock() {
 }
 
 type LibraryViewProps = {
+  onCancelSelection: () => void;
   onClearPlayback: () => void;
+  onDeleteSelected: () => void;
   playbackStateByUri: PlaybackStateMap;
+  selectedCount: number;
   selectedVideoUris: Set<string>;
   selectionMode: boolean;
   thumbnailSourceByUri: Record<string, ThumbnailSource | null | undefined>;
@@ -726,8 +715,11 @@ type LibraryViewProps = {
 };
 
 function LibraryView({
+  onCancelSelection,
   onClearPlayback,
+  onDeleteSelected,
   playbackStateByUri,
+  selectedCount,
   selectedVideoUris,
   selectionMode,
   thumbnailSourceByUri,
@@ -752,13 +744,23 @@ function LibraryView({
 
   return (
     <View style={styles.libraryWrap}>
-      {!selectionMode ? (
-        <View style={styles.libraryToolbar}>
+      <View style={styles.libraryToolbar}>
+        {selectionMode ? <Text style={styles.selectionCount}>{selectedCount} selected</Text> : <View />}
+        {selectionMode ? (
+          <View style={styles.selectionActions}>
+            <Pressable onPress={onCancelSelection} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonSecondary, pressed && styles.selectionButtonPressed]}>
+              <Text style={styles.selectionButtonSecondaryText}>Cancel</Text>
+            </Pressable>
+            <Pressable onPress={onDeleteSelected} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonDanger, pressed && styles.selectionButtonPressed]}>
+              <Text style={styles.selectionButtonDangerText}>Delete</Text>
+            </Pressable>
+          </View>
+        ) : (
           <Pressable onPress={onClearPlayback} style={({ pressed }) => [styles.clearPlaybackButton, pressed && styles.clearPlaybackButtonPressed]}>
             <Text style={styles.clearPlaybackButtonText}>Clear playback</Text>
           </Pressable>
-        </View>
-      ) : null}
+        )}
+      </View>
 
       <ScrollView contentContainerStyle={styles.libraryList} showsVerticalScrollIndicator={false}>
         {videos.map((video) => (
@@ -987,7 +989,8 @@ const styles = StyleSheet.create({
   },
   libraryToolbar: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingBottom: 8,
   },
   libraryList: {
@@ -1007,18 +1010,6 @@ const styles = StyleSheet.create({
     color: '#4f463f',
     fontSize: 13,
     fontWeight: '700',
-  },
-  selectionBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 6,
-    backgroundColor: '#efe7db',
-    borderTopWidth: 1,
-    borderTopColor: '#ded1c2',
   },
   selectionCount: {
     color: '#1d1917',

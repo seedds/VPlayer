@@ -72,8 +72,11 @@ export function VideoCard({
       </Pressable>
 
       {selectionMode ? (
-        <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
-          <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
+        <View style={styles.rowActions}>
+          {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
+          <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
+            <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
+          </View>
         </View>
       ) : (
         <View style={styles.rowActions}>
@@ -211,7 +214,9 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 8,
+    width: 100,
   },
   deleteButtonPressed: {
     opacity: 0.76,
