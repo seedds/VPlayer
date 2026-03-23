@@ -38,4 +38,9 @@ yarn-error.*
 
 # generated native folders
 /ios
-/android
+
+# Android local/build artifacts
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties

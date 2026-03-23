@@ -1,9 +1,10 @@
 {
   "expo": {
-    "name": "avplayer",
-    "slug": "avplayer",
+    "name": "VPlayer",
+    "slug": "vplayer",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
+    "scheme": "vplayer",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
@@ -21,10 +22,17 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.seedds.vplayer"
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    "plugins": [
+      "expo-video",
+      "expo-image"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "b43f0608-02b4-4a74-a7fd-7d41e323178e"
+      }
     }
   }
 }
