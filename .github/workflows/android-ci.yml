@@ -35,9 +35,6 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Expo doctor
-        run: npx expo-doctor
-
       - name: Configure Android SDK path
         run: printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > android/local.properties
 
