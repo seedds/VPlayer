@@ -10,6 +10,8 @@ import Svg, { Path, Rect } from 'react-native-svg';
 
 import { formatDuration } from '../lib/format';
 import { getSavedPlaybackPosition, savePlaybackDuration, savePlaybackPosition } from '../lib/playbackState';
+import { getActiveSubtitleText, loadSrtFile, type SubtitleCue } from '../lib/subtitles';
+import { findMatchingSubtitleUri } from '../lib/videoLibrary';
 import type { VideoItem } from '../lib/types';
 
 type PlayerScreenProps = {
@@ -30,22 +32,31 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const [isPlaying, setIsPlaying] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState(0);
+  const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+  const [activeSubtitleText, setActiveSubtitleText] = useState<string | null>(null);
   const lastLoadedUriRef = useRef(video.uri);
   const activeVideoUriRef = useRef(video.uri);
   const currentDurationRef = useRef<number>(0);
   const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPersistedPositionRef = useRef(0);
 
   useEffect(() => {
     activeVideoUriRef.current = video.uri;
+    lastPersistedPositionRef.current = 0;
   }, [video.uri]);
 
-  const persistPosition = (uri: string, positionSeconds: number) => {
+  const persistPosition = (uri: string, positionSeconds: number, force = false) => {
+    if (!force && Math.abs(positionSeconds - lastPersistedPositionRef.current) < 2) {
+      return;
+    }
+
+    lastPersistedPositionRef.current = positionSeconds;
     void savePlaybackPosition(uri, positionSeconds, currentDurationRef.current);
   };
 
   useEffect(() => {
     player.keepScreenOnWhilePlaying = true;
-    player.timeUpdateEventInterval = 2;
+    player.timeUpdateEventInterval = 0.5;
   }, [player]);
 
   useEffect(() => {
@@ -68,7 +79,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   }, [controlsVisible, isPlaying, isScrubbing]);
 
   useEventListener(player, 'playToEnd', () => {
-    persistPosition(video.uri, player.currentTime);
+    persistPosition(video.uri, player.currentTime, true);
     setControlsVisible(false);
 
     if (hasNextVideo) {
@@ -79,6 +90,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   useEventListener(player, 'timeUpdate', ({ currentTime }) => {
     setCurrentTime(currentTime);
     persistPosition(activeVideoUriRef.current, currentTime);
+    setActiveSubtitleText(getActiveSubtitleText(subtitleCues, currentTime));
   });
 
   useEventListener(player, 'playingChange', ({ isPlaying }) => {
@@ -91,6 +103,42 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setCurrentTime(player.currentTime);
     setScrubTime(player.currentTime);
   });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSubtitles() {
+      try {
+        const subtitleUri = await findMatchingSubtitleUri(video);
+
+        if (!subtitleUri || cancelled) {
+          setSubtitleCues([]);
+          setActiveSubtitleText(null);
+          return;
+        }
+
+        const cues = await loadSrtFile(subtitleUri);
+
+        if (cancelled) {
+          return;
+        }
+
+        setSubtitleCues(cues);
+        setActiveSubtitleText(getActiveSubtitleText(cues, player.currentTime));
+      } catch {
+        if (!cancelled) {
+          setSubtitleCues([]);
+          setActiveSubtitleText(null);
+        }
+      }
+    }
+
+    void loadSubtitles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [player, video]);
 
   useEffect(() => {
     if (lastLoadedUriRef.current === video.uri) {
@@ -107,6 +155,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         player.currentTime = savedPosition;
         setCurrentTime(savedPosition);
         setScrubTime(savedPosition);
+        setActiveSubtitleText(getActiveSubtitleText(subtitleCues, savedPosition));
         player.play();
       }
 
@@ -138,6 +187,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         player.currentTime = savedPosition;
         setCurrentTime(savedPosition);
         setScrubTime(savedPosition);
+        setActiveSubtitleText(getActiveSubtitleText(subtitleCues, savedPosition));
         player.play();
       }
     }
@@ -147,25 +197,25 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     return () => {
       cancelled = true;
     };
-  }, [player, video.uri]);
+  }, [player, subtitleCues, video.uri]);
 
   useEffect(() => {
     void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
 
     return () => {
-      persistPosition(activeVideoUriRef.current, player.currentTime);
+      persistPosition(activeVideoUriRef.current, player.currentTime, true);
       void ScreenOrientation.lockAsync(exitOrientationLock);
       player.release();
     };
   }, [exitOrientationLock, player]);
 
   function handleClose() {
-    persistPosition(video.uri, player.currentTime);
+    persistPosition(video.uri, player.currentTime, true);
     onClose();
   }
 
   function handleNext() {
-    persistPosition(video.uri, player.currentTime);
+    persistPosition(video.uri, player.currentTime, true);
     setControlsVisible(false);
     onSelectIndex(currentIndex + 1);
   }
@@ -207,7 +257,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setCurrentTime(value);
     setScrubTime(value);
     setIsScrubbing(false);
-    persistPosition(video.uri, value);
+    setActiveSubtitleText(getActiveSubtitleText(subtitleCues, value));
+    persistPosition(video.uri, value, true);
     setControlsVisible(true);
   }
 
@@ -223,6 +274,22 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         contentFit="contain"
         style={styles.video}
       />
+
+      {activeSubtitleText ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.subtitleOverlay,
+            {
+              bottom: controlsVisible ? insets.bottom + 54 : insets.bottom + 14,
+            },
+          ]}
+        >
+          <View style={styles.subtitleBubble}>
+            <Text style={styles.subtitleText}>{activeSubtitleText}</Text>
+          </View>
+        </View>
+      ) : null}
 
       {controlsVisible ? (
         <>
@@ -321,6 +388,26 @@ const styles = StyleSheet.create({
   },
   showTapArea: {
     ...StyleSheet.absoluteFillObject,
+  },
+  subtitleOverlay: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    alignItems: 'center',
+  },
+  subtitleBubble: {
+    maxWidth: '92%',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+  },
+  subtitleText: {
+    color: '#fff',
+    fontSize: 18,
+    lineHeight: 25,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   dismissTapArea: {
     ...StyleSheet.absoluteFillObject,

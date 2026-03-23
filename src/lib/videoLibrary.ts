@@ -27,6 +27,10 @@ export function getFileExtension(fileName: string): string {
   return parts?.[0] ?? '';
 }
 
+export function getFileBaseName(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, '');
+}
+
 export function isAllowedVideoFileName(fileName: string): boolean {
   return ALLOWED_VIDEO_EXTENSIONS.includes(getFileExtension(fileName));
 }
@@ -134,6 +138,18 @@ export async function listLibraryItems(): Promise<LibraryItem[]> {
 
 export function getVideoItems(items: LibraryItem[]): VideoItem[] {
   return items.filter((item): item is VideoItem => item.kind === 'video');
+}
+
+export async function findMatchingSubtitleUri(video: VideoItem): Promise<string | null> {
+  await ensureAppDirectories();
+
+  const baseName = getFileBaseName(video.name).toLocaleLowerCase();
+  const entries = await FileSystem.readDirectoryAsync(getVideoDirectory());
+  const matchingEntry = entries.find(
+    (entry) => isAllowedSubtitleFileName(entry) && getFileBaseName(entry).toLocaleLowerCase() === baseName,
+  );
+
+  return matchingEntry ? `${getVideoDirectory()}${matchingEntry}` : null;
 }
 
 export async function deleteLibraryItem(uri: string): Promise<void> {
