@@ -73,17 +73,25 @@ export function VideoCard({
 
       {selectionMode ? (
         <View style={styles.rowActions}>
-          {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
-          <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
-            <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
+          <View style={styles.badgeSlot}>
+            {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
+          </View>
+          <View style={styles.actionSlot}>
+            <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
+              <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
+            </View>
           </View>
         </View>
       ) : (
         <View style={styles.rowActions}>
-          {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
-          <Pressable onPress={onDelete} style={({ pressed }) => [styles.deleteButton, pressed && styles.deleteButtonPressed]}>
-            <Text style={styles.deleteLabel}>Delete</Text>
-          </Pressable>
+          <View style={styles.badgeSlot}>
+            {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
+          </View>
+          <View style={styles.actionSlot}>
+            <Pressable onPress={onDelete} style={({ pressed }) => [styles.deleteButton, pressed && styles.deleteButtonPressed]}>
+              <Text style={styles.deleteLabel}>Delete</Text>
+            </Pressable>
+          </View>
         </View>
       )}
     </View>
@@ -214,9 +222,17 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 8,
-    width: 100,
+  },
+  badgeSlot: {
+    width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionSlot: {
+    width: 78,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   deleteButtonPressed: {
     opacity: 0.76,
