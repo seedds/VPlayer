@@ -361,9 +361,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
           <Pressable onPress={handleHideControls} style={styles.dismissTapArea} />
 
           <View style={[styles.topOverlay, { paddingTop: insets.top + 10 }]}> 
-            <Pressable onPress={handleClose} style={({ pressed }) => [styles.closeButton, pressed && styles.closeButtonPressed]}>
-              <Text style={styles.closeButtonText}>Back</Text>
-            </Pressable>
+            <View style={styles.topActionSlot}>
+              <Pressable onPress={handleClose} style={({ pressed }) => [styles.closeButton, pressed && styles.closeButtonPressed]}>
+                <Text style={styles.closeButtonText}>Back</Text>
+              </Pressable>
+            </View>
 
             <View style={styles.titleWrap}>
               <Text numberOfLines={1} style={styles.fileName}>
@@ -375,11 +377,13 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
               </Text>
             </View>
 
-            {hasNextVideo ? (
-              <Pressable onPress={handleNext} style={({ pressed }) => [styles.nextButton, pressed && styles.closeButtonPressed]}>
-                <Text style={styles.closeButtonText}>Next</Text>
-              </Pressable>
-            ) : null}
+            <View style={[styles.topActionSlot, styles.topActionSlotRight]}>
+              {hasNextVideo ? (
+                <Pressable onPress={handleNext} style={({ pressed }) => [styles.nextButton, pressed && styles.closeButtonPressed]}>
+                  <Text style={styles.closeButtonText}>Next</Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
 
           <View style={styles.centerOverlay}>
@@ -501,6 +505,13 @@ const styles = StyleSheet.create({
     gap: 14,
     paddingHorizontal: 18,
   },
+  topActionSlot: {
+    width: 78,
+    alignItems: 'flex-start',
+  },
+  topActionSlotRight: {
+    alignItems: 'flex-end',
+  },
   centerOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
@@ -538,16 +549,19 @@ const styles = StyleSheet.create({
   titleWrap: {
     flex: 1,
     gap: 3,
+    alignItems: 'center',
   },
   fileName: {
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
+    textAlign: 'center',
   },
   playlistMeta: {
     color: 'rgba(255,255,255,0.7)',
     fontSize: 12,
     fontWeight: '500',
+    textAlign: 'center',
   },
   transportRow: {
     flexDirection: 'row',
