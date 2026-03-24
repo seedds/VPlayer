@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import Slider from '@react-native-community/slider';
 import { useEventListener } from 'expo';
 import { StatusBar } from 'expo-status-bar';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { createVideoPlayer, VideoView } from 'expo-video';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Rect } from 'react-native-svg';
 
@@ -50,11 +49,17 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const currentDurationRef = useRef<number>(0);
   const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPersistedPositionRef = useRef(0);
+  const seekBarWidthRef = useRef(1);
+  const scrubTimeRef = useRef(0);
 
   useEffect(() => {
     activeVideoUriRef.current = video.uri;
     lastPersistedPositionRef.current = 0;
   }, [video.uri]);
+
+  useEffect(() => {
+    scrubTimeRef.current = scrubTime;
+  }, [scrubTime]);
 
   const persistPosition = (uri: string, positionSeconds: number, force = false) => {
     if (!force && Math.abs(positionSeconds - lastPersistedPositionRef.current) < 2) {
@@ -257,10 +262,45 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setControlsVisible(false);
   }
 
-  function handleSlidingStart() {
-    setIsScrubbing(true);
-    setScrubTime(currentTime);
+  function handleSeekBarLayout(event: LayoutChangeEvent) {
+    seekBarWidthRef.current = Math.max(event.nativeEvent.layout.width, 1);
+  }
+
+  function getSeekTimeFromPosition(positionX: number): number {
+    const width = Math.max(seekBarWidthRef.current, 1);
+    const clampedX = Math.max(0, Math.min(positionX, width));
+    const safeDuration = Math.max(currentDurationRef.current, 0);
+
+    if (safeDuration <= 0) {
+      return 0;
+    }
+
+    return (clampedX / width) * safeDuration;
+  }
+
+  function updateScrubFromEvent(event: GestureResponderEvent) {
+    const nextTime = getSeekTimeFromPosition(event.nativeEvent.locationX);
+    setScrubTime(nextTime);
+    setActiveSubtitleText(getActiveSubtitleText(subtitleCues, nextTime));
     setControlsVisible(true);
+    return nextTime;
+  }
+
+  function handleSeekBarGrant(event: GestureResponderEvent) {
+    setIsScrubbing(true);
+    updateScrubFromEvent(event);
+  }
+
+  function handleSeekBarMove(event: GestureResponderEvent) {
+    updateScrubFromEvent(event);
+  }
+
+  function handleSeekBarRelease(event: GestureResponderEvent) {
+    handleSlidingComplete(updateScrubFromEvent(event));
+  }
+
+  function handleSeekBarTerminate() {
+    handleSlidingComplete(scrubTimeRef.current);
   }
 
   function handleSlidingComplete(value: number) {
@@ -276,6 +316,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const displayedTime = isScrubbing ? scrubTime : currentTime;
   const duration = currentDurationRef.current;
   const remainingTime = Math.max(duration - displayedTime, 0);
+  const progressPercent = duration > 0 ? Math.max(0, Math.min(displayedTime / duration, 1)) : 0;
 
   return (
     <View style={styles.container}>
@@ -359,19 +400,20 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
             <View style={styles.timeRow}>
               <Text style={styles.timeText}>{formatDuration(displayedTime)}</Text>
               <View style={styles.sliderColumn}>
-                <Slider
-                  maximumTrackTintColor="rgba(255,255,255,0.2)"
-                  maximumValue={Math.max(duration, 0.1)}
-                  minimumTrackTintColor="#1f6f68"
-                  minimumValue={0}
-                  onSlidingComplete={handleSlidingComplete}
-                  onSlidingStart={handleSlidingStart}
-                  onValueChange={setScrubTime}
-                  step={1}
-                  style={styles.slider}
-                  thumbTintColor="#fff"
-                  value={Math.min(displayedTime, Math.max(duration, 0.1))}
-                />
+                <View
+                  onLayout={handleSeekBarLayout}
+                  onMoveShouldSetResponder={() => true}
+                  onResponderGrant={handleSeekBarGrant}
+                  onResponderMove={handleSeekBarMove}
+                  onResponderRelease={handleSeekBarRelease}
+                  onResponderTerminate={handleSeekBarTerminate}
+                  onStartShouldSetResponder={() => true}
+                  style={styles.seekBarTouchArea}
+                >
+                  <View style={styles.seekBarTrack}>
+                    <View style={[styles.seekBarProgress, { width: `${progressPercent * 100}%` }]} />
+                  </View>
+                </View>
               </View>
               <Text style={styles.timeText}>-{formatDuration(remainingTime)}</Text>
             </View>
@@ -538,14 +580,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     minWidth: 44,
   },
-  slider: {
-    width: '100%',
-    flex: 1,
-    height: 28,
-  },
   sliderColumn: {
     flex: 1,
     justifyContent: 'flex-end',
-    minHeight: 28,
+    minHeight: 44,
+  },
+  seekBarTouchArea: {
+    width: '100%',
+    height: 44,
+    justifyContent: 'center',
+  },
+  seekBarTrack: {
+    width: '100%',
+    height: 10,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.24)',
+  },
+  seekBarProgress: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#1f6f68',
   },
 });
