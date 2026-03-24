@@ -32,6 +32,9 @@ const SUBTITLE_OUTLINE_OFFSETS = [
   [2, 2],
 ] as const;
 
+const BACKGROUND_DOUBLE_TAP_DELAY_MS = 250;
+const SCRUB_PREVIEW_DELAY_MS = 150;
+
 export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSelectIndex, videos }: PlayerScreenProps) {
   const insets = useSafeAreaInsets();
   const video = videos[currentIndex];
@@ -48,7 +51,13 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const activeVideoUriRef = useRef(video.uri);
   const currentDurationRef = useRef<number>(0);
   const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backgroundTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewSeekTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBackgroundTapTimestampRef = useRef(0);
   const lastPersistedPositionRef = useRef(0);
+  const wasPlayingBeforeScrubRef = useRef(false);
+  const pendingPreviewTimeRef = useRef(0);
+  const lastPreviewedTimeRef = useRef<number | null>(null);
   const seekBarWidthRef = useRef(1);
   const scrubTimeRef = useRef(0);
 
@@ -94,6 +103,20 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     };
   }, [controlsVisible, isPlaying, isScrubbing]);
 
+  useEffect(() => {
+    return () => {
+      if (backgroundTapTimeoutRef.current) {
+        clearTimeout(backgroundTapTimeoutRef.current);
+        backgroundTapTimeoutRef.current = null;
+      }
+
+      if (previewSeekTimeoutRef.current) {
+        clearTimeout(previewSeekTimeoutRef.current);
+        previewSeekTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   useEventListener(player, 'playToEnd', () => {
     persistPosition(video.uri, player.currentTime, true);
     setControlsVisible(false);
@@ -105,7 +128,9 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
   useEventListener(player, 'timeUpdate', ({ currentTime }) => {
     setCurrentTime(currentTime);
-    persistPosition(activeVideoUriRef.current, currentTime);
+    if (!isScrubbing) {
+      persistPosition(activeVideoUriRef.current, currentTime);
+    }
     setActiveSubtitleText(getActiveSubtitleText(subtitleCues, currentTime));
   });
 
@@ -254,12 +279,83 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setControlsVisible(true);
   }
 
+  function clearPendingBackgroundTap() {
+    if (backgroundTapTimeoutRef.current) {
+      clearTimeout(backgroundTapTimeoutRef.current);
+      backgroundTapTimeoutRef.current = null;
+    }
+  }
+
+  function handleBackgroundTap(singleTapAction: () => void) {
+    if (isScrubbing) {
+      return;
+    }
+
+    const now = Date.now();
+    const isDoubleTap =
+      backgroundTapTimeoutRef.current !== null &&
+      now - lastBackgroundTapTimestampRef.current <= BACKGROUND_DOUBLE_TAP_DELAY_MS;
+
+    if (isDoubleTap) {
+      clearPendingBackgroundTap();
+      lastBackgroundTapTimestampRef.current = 0;
+      handleTogglePlayback();
+      return;
+    }
+
+    lastBackgroundTapTimestampRef.current = now;
+    clearPendingBackgroundTap();
+    backgroundTapTimeoutRef.current = setTimeout(() => {
+      backgroundTapTimeoutRef.current = null;
+      singleTapAction();
+    }, BACKGROUND_DOUBLE_TAP_DELAY_MS);
+  }
+
+  function clearPendingPreviewSeek() {
+    if (previewSeekTimeoutRef.current) {
+      clearTimeout(previewSeekTimeoutRef.current);
+      previewSeekTimeoutRef.current = null;
+    }
+  }
+
+  function setScrubbingMode(enabled: boolean) {
+    player.scrubbingModeOptions = { scrubbingModeEnabled: enabled };
+  }
+
+  function applyPreviewSeek(time: number) {
+    if (lastPreviewedTimeRef.current !== null && Math.abs(lastPreviewedTimeRef.current - time) < 0.1) {
+      return;
+    }
+
+    lastPreviewedTimeRef.current = time;
+    player.currentTime = time;
+    setCurrentTime(time);
+    setActiveSubtitleText(getActiveSubtitleText(subtitleCues, time));
+  }
+
+  function schedulePreviewSeek(time: number) {
+    pendingPreviewTimeRef.current = time;
+    clearPendingPreviewSeek();
+    previewSeekTimeoutRef.current = setTimeout(() => {
+      previewSeekTimeoutRef.current = null;
+      applyPreviewSeek(pendingPreviewTimeRef.current);
+    }, SCRUB_PREVIEW_DELAY_MS);
+  }
+
   function handleToggleControls() {
     setControlsVisible((visible) => !visible);
   }
 
   function handleHideControls() {
     setControlsVisible(false);
+  }
+
+  function handleVisibleBackgroundTap() {
+    handleBackgroundTap(handleHideControls);
+  }
+
+  function handleHiddenBackgroundTap() {
+    handleBackgroundTap(handleToggleControls);
   }
 
   function handleSeekBarLayout(event: LayoutChangeEvent) {
@@ -287,12 +383,17 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   }
 
   function handleSeekBarGrant(event: GestureResponderEvent) {
+    clearPendingPreviewSeek();
+    wasPlayingBeforeScrubRef.current = player.playing;
+    lastPreviewedTimeRef.current = null;
+    setScrubbingMode(true);
+    player.pause();
     setIsScrubbing(true);
-    updateScrubFromEvent(event);
+    schedulePreviewSeek(updateScrubFromEvent(event));
   }
 
   function handleSeekBarMove(event: GestureResponderEvent) {
-    updateScrubFromEvent(event);
+    schedulePreviewSeek(updateScrubFromEvent(event));
   }
 
   function handleSeekBarRelease(event: GestureResponderEvent) {
@@ -304,6 +405,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   }
 
   function handleSlidingComplete(value: number) {
+    clearPendingPreviewSeek();
+    setScrubbingMode(false);
     player.currentTime = value;
     setCurrentTime(value);
     setScrubTime(value);
@@ -311,6 +414,13 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setActiveSubtitleText(getActiveSubtitleText(subtitleCues, value));
     persistPosition(video.uri, value, true);
     setControlsVisible(true);
+
+    if (wasPlayingBeforeScrubRef.current) {
+      player.play();
+    }
+
+    wasPlayingBeforeScrubRef.current = false;
+    lastPreviewedTimeRef.current = value;
   }
 
   const displayedTime = isScrubbing ? scrubTime : currentTime;
@@ -358,7 +468,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
       {controlsVisible ? (
         <>
-          <Pressable onPress={handleHideControls} style={styles.dismissTapArea} />
+          <Pressable onPress={handleVisibleBackgroundTap} style={styles.dismissTapArea} />
 
           <View style={[styles.topOverlay, { paddingTop: insets.top + 10 }]}> 
             <View style={styles.topActionSlot}>
@@ -432,7 +542,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
           </View>
         </>
       ) : (
-        <Pressable onPress={handleToggleControls} style={styles.showTapArea} />
+        <Pressable onPress={handleHiddenBackgroundTap} style={styles.showTapArea} />
       )}
     </View>
   );
