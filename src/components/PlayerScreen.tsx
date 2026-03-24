@@ -34,8 +34,7 @@ const SUBTITLE_OUTLINE_OFFSETS = [
 ] as const;
 
 const BACKGROUND_DOUBLE_TAP_DELAY_MS = 250;
-const SCRUB_PREVIEW_DELAY_MS = 100;
-const SCRUB_PREVIEW_STABLE_THRESHOLD_SECONDS = 0.2;
+const SCRUB_PREVIEW_DEDUPE_THRESHOLD_SECONDS = 0.05;
 const SCRUB_PREVIEW_POPUP_WIDTH = 160;
 const SCRUB_PREVIEW_POPUP_HEIGHT = 90;
 
@@ -57,11 +56,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const currentDurationRef = useRef<number>(0);
   const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backgroundTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const previewSeekTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewRequestInFlightRef = useRef(false);
   const previewThumbnailRequestIdRef = useRef(0);
   const lastBackgroundTapTimestampRef = useRef(0);
   const lastPersistedPositionRef = useRef(0);
-  const pendingPreviewTimeRef = useRef(0);
+  const queuedPreviewTimeRef = useRef<number | null>(null);
   const lastPreviewedTimeRef = useRef<number | null>(null);
   const seekBarWidthRef = useRef(1);
   const scrubTimeRef = useRef(0);
@@ -69,7 +68,10 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   useEffect(() => {
     activeVideoUriRef.current = video.uri;
     lastPersistedPositionRef.current = 0;
+    previewRequestInFlightRef.current = false;
+    queuedPreviewTimeRef.current = null;
     previewThumbnailRequestIdRef.current += 1;
+    lastPreviewedTimeRef.current = null;
     setScrubPreviewSource(null);
   }, [video.uri]);
 
@@ -117,11 +119,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         backgroundTapTimeoutRef.current = null;
       }
 
-      if (previewSeekTimeoutRef.current) {
-        clearTimeout(previewSeekTimeoutRef.current);
-        previewSeekTimeoutRef.current = null;
-      }
-
+      previewRequestInFlightRef.current = false;
+      queuedPreviewTimeRef.current = null;
       previewThumbnailRequestIdRef.current += 1;
     };
   }, []);
@@ -329,15 +328,9 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     }, BACKGROUND_DOUBLE_TAP_DELAY_MS);
   }
 
-  function clearPendingPreviewSeek() {
-    if (previewSeekTimeoutRef.current) {
-      clearTimeout(previewSeekTimeoutRef.current);
-      previewSeekTimeoutRef.current = null;
-    }
-  }
-
   function clearScrubPreview() {
-    clearPendingPreviewSeek();
+    previewRequestInFlightRef.current = false;
+    queuedPreviewTimeRef.current = null;
     previewThumbnailRequestIdRef.current += 1;
     lastPreviewedTimeRef.current = null;
     setScrubPreviewSource(null);
@@ -357,31 +350,45 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       if (previewThumbnailRequestIdRef.current === requestId) {
         setScrubPreviewSource(null);
       }
-    }
-  }
-
-  function schedulePreviewSeek(time: number) {
-    const isWithinStableThreshold = Math.abs(pendingPreviewTimeRef.current - time) <= SCRUB_PREVIEW_STABLE_THRESHOLD_SECONDS;
-
-    pendingPreviewTimeRef.current = time;
-
-    if (previewSeekTimeoutRef.current && isWithinStableThreshold) {
-      return;
-    }
-
-    clearPendingPreviewSeek();
-    previewSeekTimeoutRef.current = setTimeout(() => {
-      previewSeekTimeoutRef.current = null;
-      const previewTime = pendingPreviewTimeRef.current;
-
-      if (lastPreviewedTimeRef.current !== null && Math.abs(lastPreviewedTimeRef.current - previewTime) <= SCRUB_PREVIEW_STABLE_THRESHOLD_SECONDS) {
+    } finally {
+      if (previewThumbnailRequestIdRef.current !== requestId) {
         return;
       }
 
-      const requestId = previewThumbnailRequestIdRef.current + 1;
-      previewThumbnailRequestIdRef.current = requestId;
-      void generateScrubPreview(previewTime, requestId);
-    }, SCRUB_PREVIEW_DELAY_MS);
+      previewRequestInFlightRef.current = false;
+
+      const queuedPreviewTime = queuedPreviewTimeRef.current;
+      queuedPreviewTimeRef.current = null;
+
+      if (
+        queuedPreviewTime !== null &&
+        (lastPreviewedTimeRef.current === null ||
+          Math.abs(lastPreviewedTimeRef.current - queuedPreviewTime) > SCRUB_PREVIEW_DEDUPE_THRESHOLD_SECONDS)
+      ) {
+        requestScrubPreview(queuedPreviewTime);
+      }
+    }
+  }
+
+  function requestScrubPreview(time: number) {
+    if (
+      lastPreviewedTimeRef.current !== null &&
+      Math.abs(lastPreviewedTimeRef.current - time) <= SCRUB_PREVIEW_DEDUPE_THRESHOLD_SECONDS
+    ) {
+      return;
+    }
+
+    if (previewRequestInFlightRef.current) {
+      queuedPreviewTimeRef.current = time;
+      return;
+    }
+
+    previewRequestInFlightRef.current = true;
+    queuedPreviewTimeRef.current = null;
+
+    const requestId = previewThumbnailRequestIdRef.current + 1;
+    previewThumbnailRequestIdRef.current = requestId;
+    void generateScrubPreview(time, requestId);
   }
 
   function handleToggleControls() {
@@ -426,13 +433,12 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
   function handleSeekBarGrant(event: GestureResponderEvent) {
     clearScrubPreview();
-    lastPreviewedTimeRef.current = null;
     setIsScrubbing(true);
-    schedulePreviewSeek(updateScrubFromEvent(event));
+    requestScrubPreview(updateScrubFromEvent(event));
   }
 
   function handleSeekBarMove(event: GestureResponderEvent) {
-    schedulePreviewSeek(updateScrubFromEvent(event));
+    requestScrubPreview(updateScrubFromEvent(event));
   }
 
   function handleSeekBarRelease(event: GestureResponderEvent) {
