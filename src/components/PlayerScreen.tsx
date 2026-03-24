@@ -23,14 +23,14 @@ type PlayerScreenProps = {
 };
 
 const SUBTITLE_OUTLINE_OFFSETS = [
-  [-1, 0],
-  [1, 0],
-  [0, -1],
-  [0, 1],
-  [-1, -1],
-  [1, -1],
-  [-1, 1],
-  [1, 1],
+  [-2, 0],
+  [2, 0],
+  [0, -2],
+  [0, 2],
+  [-2, -2],
+  [2, -2],
+  [-2, 2],
+  [2, 2],
 ] as const;
 
 export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSelectIndex, videos }: PlayerScreenProps) {
