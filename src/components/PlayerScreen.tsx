@@ -586,7 +586,7 @@ const styles = StyleSheet.create({
   },
   seekBarTrack: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: 14,
+    borderRadius: 0,
     overflow: 'hidden',
     backgroundColor: 'rgba(10,18,26,0.72)',
   },
