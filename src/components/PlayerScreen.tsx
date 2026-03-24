@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useEventListener } from 'expo';
+import { Image, type ImageProps } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { createVideoPlayer, VideoView } from 'expo-video';
@@ -33,7 +34,8 @@ const SUBTITLE_OUTLINE_OFFSETS = [
 ] as const;
 
 const BACKGROUND_DOUBLE_TAP_DELAY_MS = 250;
-const SCRUB_PREVIEW_DELAY_MS = 150;
+const SCRUB_PREVIEW_DELAY_MS = 250;
+const SCRUB_PREVIEW_STABLE_THRESHOLD_SECONDS = 0.2;
 
 export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSelectIndex, videos }: PlayerScreenProps) {
   const insets = useSafeAreaInsets();
@@ -44,6 +46,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const [scrubPreviewSource, setScrubPreviewSource] = useState<ImageProps['source'] | null>(null);
   const [scrubTime, setScrubTime] = useState(0);
   const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
   const [activeSubtitleText, setActiveSubtitleText] = useState<string | null>(null);
@@ -53,9 +56,9 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backgroundTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewSeekTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewThumbnailRequestIdRef = useRef(0);
   const lastBackgroundTapTimestampRef = useRef(0);
   const lastPersistedPositionRef = useRef(0);
-  const wasPlayingBeforeScrubRef = useRef(false);
   const pendingPreviewTimeRef = useRef(0);
   const lastPreviewedTimeRef = useRef<number | null>(null);
   const seekBarWidthRef = useRef(1);
@@ -64,6 +67,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   useEffect(() => {
     activeVideoUriRef.current = video.uri;
     lastPersistedPositionRef.current = 0;
+    previewThumbnailRequestIdRef.current += 1;
+    setScrubPreviewSource(null);
   }, [video.uri]);
 
   useEffect(() => {
@@ -114,6 +119,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         clearTimeout(previewSeekTimeoutRef.current);
         previewSeekTimeoutRef.current = null;
       }
+
+      previewThumbnailRequestIdRef.current += 1;
     };
   }, []);
 
@@ -130,8 +137,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setCurrentTime(currentTime);
     if (!isScrubbing) {
       persistPosition(activeVideoUriRef.current, currentTime);
+      setActiveSubtitleText(getActiveSubtitleText(subtitleCues, currentTime));
     }
-    setActiveSubtitleText(getActiveSubtitleText(subtitleCues, currentTime));
   });
 
   useEventListener(player, 'playingChange', ({ isPlaying }) => {
@@ -279,6 +286,15 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setControlsVisible(true);
   }
 
+  function handleTogglePlaybackWithoutControls() {
+    if (player.playing) {
+      player.pause();
+      return;
+    }
+
+    player.play();
+  }
+
   function clearPendingBackgroundTap() {
     if (backgroundTapTimeoutRef.current) {
       clearTimeout(backgroundTapTimeoutRef.current);
@@ -299,7 +315,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     if (isDoubleTap) {
       clearPendingBackgroundTap();
       lastBackgroundTapTimestampRef.current = 0;
-      handleTogglePlayback();
+      handleTogglePlaybackWithoutControls();
       return;
     }
 
@@ -318,27 +334,51 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     }
   }
 
-  function setScrubbingMode(enabled: boolean) {
-    player.scrubbingModeOptions = { scrubbingModeEnabled: enabled };
+  function clearScrubPreview() {
+    clearPendingPreviewSeek();
+    previewThumbnailRequestIdRef.current += 1;
+    lastPreviewedTimeRef.current = null;
+    setScrubPreviewSource(null);
   }
 
-  function applyPreviewSeek(time: number) {
-    if (lastPreviewedTimeRef.current !== null && Math.abs(lastPreviewedTimeRef.current - time) < 0.1) {
-      return;
-    }
+  async function generateScrubPreview(time: number, requestId: number) {
+    try {
+      const [thumbnail] = await player.generateThumbnailsAsync([time]);
 
-    lastPreviewedTimeRef.current = time;
-    player.currentTime = time;
-    setCurrentTime(time);
-    setActiveSubtitleText(getActiveSubtitleText(subtitleCues, time));
+      if (previewThumbnailRequestIdRef.current !== requestId || !thumbnail) {
+        return;
+      }
+
+      lastPreviewedTimeRef.current = time;
+      setScrubPreviewSource(thumbnail as ImageProps['source']);
+    } catch {
+      if (previewThumbnailRequestIdRef.current === requestId) {
+        setScrubPreviewSource(null);
+      }
+    }
   }
 
   function schedulePreviewSeek(time: number) {
+    const isWithinStableThreshold = Math.abs(pendingPreviewTimeRef.current - time) <= SCRUB_PREVIEW_STABLE_THRESHOLD_SECONDS;
+
     pendingPreviewTimeRef.current = time;
+
+    if (previewSeekTimeoutRef.current && isWithinStableThreshold) {
+      return;
+    }
+
     clearPendingPreviewSeek();
     previewSeekTimeoutRef.current = setTimeout(() => {
       previewSeekTimeoutRef.current = null;
-      applyPreviewSeek(pendingPreviewTimeRef.current);
+      const previewTime = pendingPreviewTimeRef.current;
+
+      if (lastPreviewedTimeRef.current !== null && Math.abs(lastPreviewedTimeRef.current - previewTime) <= SCRUB_PREVIEW_STABLE_THRESHOLD_SECONDS) {
+        return;
+      }
+
+      const requestId = previewThumbnailRequestIdRef.current + 1;
+      previewThumbnailRequestIdRef.current = requestId;
+      void generateScrubPreview(previewTime, requestId);
     }, SCRUB_PREVIEW_DELAY_MS);
   }
 
@@ -383,11 +423,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   }
 
   function handleSeekBarGrant(event: GestureResponderEvent) {
-    clearPendingPreviewSeek();
-    wasPlayingBeforeScrubRef.current = player.playing;
+    clearScrubPreview();
     lastPreviewedTimeRef.current = null;
-    setScrubbingMode(true);
-    player.pause();
     setIsScrubbing(true);
     schedulePreviewSeek(updateScrubFromEvent(event));
   }
@@ -405,8 +442,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   }
 
   function handleSlidingComplete(value: number) {
-    clearPendingPreviewSeek();
-    setScrubbingMode(false);
+    clearScrubPreview();
     player.currentTime = value;
     setCurrentTime(value);
     setScrubTime(value);
@@ -414,13 +450,6 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setActiveSubtitleText(getActiveSubtitleText(subtitleCues, value));
     persistPosition(video.uri, value, true);
     setControlsVisible(true);
-
-    if (wasPlayingBeforeScrubRef.current) {
-      player.play();
-    }
-
-    wasPlayingBeforeScrubRef.current = false;
-    lastPreviewedTimeRef.current = value;
   }
 
   const displayedTime = isScrubbing ? scrubTime : currentTime;
@@ -437,6 +466,12 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         contentFit="contain"
         style={styles.video}
       />
+
+      {isScrubbing && scrubPreviewSource ? (
+        <View pointerEvents="none" style={styles.scrubPreviewOverlay}>
+          <Image contentFit="contain" source={scrubPreviewSource} style={styles.scrubPreviewImage} transition={0} />
+        </View>
+      ) : null}
 
       {activeSubtitleText ? (
         <View
@@ -573,6 +608,14 @@ const styles = StyleSheet.create({
   video: {
     flex: 1,
     backgroundColor: '#050505',
+  },
+  scrubPreviewOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#050505',
+  },
+  scrubPreviewImage: {
+    width: '100%',
+    height: '100%',
   },
   showTapArea: {
     ...StyleSheet.absoluteFillObject,
