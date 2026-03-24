@@ -26,6 +26,9 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
@@ -47,9 +50,10 @@ jobs:
           fi
 
       - name: Build release APK
-        run: ./gradlew :app:assembleRelease
+        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a
         working-directory: android
         env:
+          NODE_ENV: production
           VPLAYER_RELEASE_STORE_FILE: ${{ runner.temp }}/vplayer-release.keystore
           VPLAYER_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
           VPLAYER_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
@@ -58,6 +62,6 @@ jobs:
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: vplayer-release-apk
+          name: vplayer-release-apk-arm64
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
