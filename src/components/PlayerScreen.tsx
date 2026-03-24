@@ -396,26 +396,34 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
             </View>
           </View>
 
-          <View style={[styles.bottomOverlay, { paddingBottom: insets.bottom + 14 }]}> 
-            <View style={styles.timeRow}>
-              <Text style={styles.timeText}>{formatDuration(displayedTime)}</Text>
-              <View style={styles.sliderColumn}>
-                <View
-                  onLayout={handleSeekBarLayout}
-                  onMoveShouldSetResponder={() => true}
-                  onResponderGrant={handleSeekBarGrant}
-                  onResponderMove={handleSeekBarMove}
-                  onResponderRelease={handleSeekBarRelease}
-                  onResponderTerminate={handleSeekBarTerminate}
-                  onStartShouldSetResponder={() => true}
-                  style={styles.seekBarTouchArea}
-                >
-                  <View style={styles.seekBarTrack}>
-                    <View style={[styles.seekBarProgress, { width: `${progressPercent * 100}%` }]} />
-                  </View>
+          <View style={[styles.bottomOverlay, { paddingBottom: insets.bottom + 12 }]}> 
+            <View
+              style={[
+                styles.seekBarShell,
+                {
+                  marginLeft: Math.max(insets.left, 10),
+                  marginRight: Math.max(insets.right, 10),
+                },
+              ]}
+            >
+              <View
+                onLayout={handleSeekBarLayout}
+                onMoveShouldSetResponder={() => true}
+                onResponderGrant={handleSeekBarGrant}
+                onResponderMove={handleSeekBarMove}
+                onResponderRelease={handleSeekBarRelease}
+                onResponderTerminate={handleSeekBarTerminate}
+                onStartShouldSetResponder={() => true}
+                style={styles.seekBarTouchArea}
+              >
+                <View style={styles.seekBarTrack}>
+                  <View style={[styles.seekBarProgress, { width: `${progressPercent * 100}%` }]} />
+                </View>
+                <View pointerEvents="none" style={styles.seekBarLabelRow}>
+                  <Text style={styles.seekBarTimeText}>{formatDuration(displayedTime)}</Text>
+                  <Text style={styles.seekBarTimeText}>-{formatDuration(remainingTime)}</Text>
                 </View>
               </View>
-              <Text style={styles.timeText}>-{formatDuration(remainingTime)}</Text>
             </View>
           </View>
         </>
@@ -504,9 +512,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingHorizontal: 18,
-    gap: 10,
-    backgroundColor: 'rgba(0,0,0,0.18)',
+    paddingHorizontal: 0,
+    backgroundColor: 'transparent',
   },
   closeButton: {
     paddingHorizontal: 16,
@@ -569,21 +576,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  timeText: {
-    color: 'rgba(255,255,255,0.86)',
-    fontSize: 12,
-    fontWeight: '600',
-    minWidth: 44,
-  },
-  sliderColumn: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    minHeight: 44,
+  seekBarShell: {
+    width: '100%',
   },
   seekBarTouchArea: {
     width: '100%',
@@ -591,15 +585,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   seekBarTrack: {
-    width: '100%',
-    height: 10,
-    borderRadius: 999,
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 14,
     overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.24)',
+    backgroundColor: 'rgba(10,18,26,0.72)',
   },
   seekBarProgress: {
     height: '100%',
-    borderRadius: 999,
     backgroundColor: '#1f6f68',
+  },
+  seekBarLabelRow: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+  },
+  seekBarTimeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
