@@ -1,13 +1,16 @@
 # VPlayer
 
-Expo React Native app for Android-first local video transfers and playback.
+VPlayer is an Android-first app that does two things:
+
+- hosts a local HTTP server so you can upload files from a browser on the same Wi-Fi
+- plays local video files on the device
 
 ## Features
 
-- Starts a local HTTP server on the phone.
-- Lets a computer browser upload video files over the same Wi-Fi network.
-- Stores uploaded videos in the app sandbox.
-- Plays local videos with automatic landscape mode.
+- Local HTTP upload server running on the phone.
+- Browser-based uploads from another device on the same Wi-Fi network.
+- Local video playback on the device.
+- Automatic landscape playback for videos.
 
 ## Local development
 
@@ -35,9 +38,8 @@ eas build -p android --profile preview
 
 1. Launch the app on an Android phone.
 2. Open the Upload tab and note the local URL.
-3. Visit that URL from a computer browser on the same Wi-Fi network.
-4. Upload a video.
-5. Open Library and tap Play.
+3. Visit that URL from a browser on the same Wi-Fi network and upload a video.
+4. Open Library and play the uploaded file.
 
 ## Notes
 
