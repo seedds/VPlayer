@@ -275,6 +275,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
   const displayedTime = isScrubbing ? scrubTime : currentTime;
   const duration = currentDurationRef.current;
+  const remainingTime = Math.max(duration - displayedTime, 0);
 
   return (
     <View style={styles.container}>
@@ -372,7 +373,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
                   value={Math.min(displayedTime, Math.max(duration, 0.1))}
                 />
               </View>
-              <Text style={styles.timeText}>{formatDuration(duration)}</Text>
+              <Text style={styles.timeText}>-{formatDuration(remainingTime)}</Text>
             </View>
           </View>
         </>
