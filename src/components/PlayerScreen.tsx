@@ -138,8 +138,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setCurrentTime(currentTime);
     if (!isScrubbing) {
       persistPosition(activeVideoUriRef.current, currentTime);
-      setActiveSubtitleText(getActiveSubtitleText(subtitleCues, currentTime));
     }
+    setActiveSubtitleText(getActiveSubtitleText(subtitleCues, currentTime));
   });
 
   useEventListener(player, 'playingChange', ({ isPlaying }) => {
@@ -426,7 +426,6 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   function updateScrubFromEvent(event: GestureResponderEvent) {
     const nextTime = getSeekTimeFromPosition(event.nativeEvent.locationX);
     setScrubTime(nextTime);
-    setActiveSubtitleText(getActiveSubtitleText(subtitleCues, nextTime));
     setControlsVisible(true);
     return nextTime;
   }
