@@ -34,8 +34,10 @@ const SUBTITLE_OUTLINE_OFFSETS = [
 ] as const;
 
 const BACKGROUND_DOUBLE_TAP_DELAY_MS = 250;
-const SCRUB_PREVIEW_DELAY_MS = 250;
+const SCRUB_PREVIEW_DELAY_MS = 100;
 const SCRUB_PREVIEW_STABLE_THRESHOLD_SECONDS = 0.2;
+const SCRUB_PREVIEW_POPUP_WIDTH = 160;
+const SCRUB_PREVIEW_POPUP_HEIGHT = 90;
 
 export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSelectIndex, videos }: PlayerScreenProps) {
   const insets = useSafeAreaInsets();
@@ -456,6 +458,13 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const duration = currentDurationRef.current;
   const remainingTime = Math.max(duration - displayedTime, 0);
   const progressPercent = duration > 0 ? Math.max(0, Math.min(displayedTime / duration, 1)) : 0;
+  const scrubPreviewLeft = Math.max(
+    0,
+    Math.min(
+      progressPercent * seekBarWidthRef.current - SCRUB_PREVIEW_POPUP_WIDTH / 2,
+      Math.max(seekBarWidthRef.current - SCRUB_PREVIEW_POPUP_WIDTH, 0)
+    )
+  );
 
   return (
     <View style={styles.container}>
@@ -466,12 +475,6 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         contentFit="contain"
         style={styles.video}
       />
-
-      {isScrubbing && scrubPreviewSource ? (
-        <View pointerEvents="none" style={styles.scrubPreviewOverlay}>
-          <Image contentFit="contain" source={scrubPreviewSource} style={styles.scrubPreviewImage} transition={0} />
-        </View>
-      ) : null}
 
       {activeSubtitleText ? (
         <View
@@ -555,6 +558,12 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
                 },
               ]}
             >
+              {isScrubbing && scrubPreviewSource ? (
+                <View pointerEvents="none" style={[styles.scrubPreviewPopup, { left: scrubPreviewLeft }]}> 
+                  <Image contentFit="cover" source={scrubPreviewSource} style={styles.scrubPreviewImage} transition={0} />
+                </View>
+              ) : null}
+
               <View
                 onLayout={handleSeekBarLayout}
                 onMoveShouldSetResponder={() => true}
@@ -609,13 +618,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#050505',
   },
-  scrubPreviewOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#050505',
+  scrubPreviewPopup: {
+    position: 'absolute',
+    bottom: 56,
+    width: SCRUB_PREVIEW_POPUP_WIDTH,
+    height: SCRUB_PREVIEW_POPUP_HEIGHT,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(8, 12, 16, 0.96)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   scrubPreviewImage: {
-    width: '100%',
-    height: '100%',
+    flex: 1,
   },
   showTapArea: {
     ...StyleSheet.absoluteFillObject,
@@ -745,6 +760,7 @@ const styles = StyleSheet.create({
   },
   seekBarShell: {
     width: '100%',
+    position: 'relative',
   },
   seekBarTouchArea: {
     width: '100%',
