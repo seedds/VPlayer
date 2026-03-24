@@ -401,8 +401,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
               style={[
                 styles.seekBarShell,
                 {
-                  marginLeft: Math.max(insets.left, 10),
-                  marginRight: Math.max(insets.right, 10),
+                  marginLeft: insets.left,
+                  marginRight: insets.right,
                 },
               ]}
             >
