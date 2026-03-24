@@ -129,6 +129,19 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         opacity: 0.7;
       }
 
+      .batch-status {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 18px;
+        margin-top: 14px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .batch-status strong {
+        color: var(--ink);
+      }
+
       .queue {
         display: grid;
         gap: 12px;
@@ -221,6 +234,10 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
           <button class="button" id="pick-button" type="button">Choose videos</button>
           <span class="empty" id="picker-state">Ready for new uploads.</span>
         </div>
+        <div class="batch-status" id="batch-status">
+          <span><strong id="batch-progress">0/0</strong> files completed</span>
+          <span>Speed <strong id="batch-speed">Idle</strong></span>
+        </div>
         <input id="file-input" type="file" accept="${acceptList}" multiple hidden />
         <div class="queue" id="queue">
           <div class="empty">No uploads yet.</div>
@@ -241,8 +258,12 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
       const fileInput = document.getElementById('file-input');
       const queue = document.getElementById('queue');
       const pickerState = document.getElementById('picker-state');
+      const batchProgress = document.getElementById('batch-progress');
+      const batchSpeed = document.getElementById('batch-speed');
       const defaultChunkSize = ${chunkSize};
       let dragDepth = 0;
+      let totalFilesInBatch = 0;
+      let completedFilesInBatch = 0;
 
       function setPickerState(text) {
         pickerState.textContent = text;
@@ -258,6 +279,19 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         const scaled = bytes / Math.pow(1024, index);
         const digits = scaled >= 10 || index === 0 ? 0 : 1;
         return scaled.toFixed(digits) + ' ' + units[index];
+      }
+
+      function formatSpeed(bytesPerSecond) {
+        if (!bytesPerSecond || bytesPerSecond <= 0) {
+          return 'Idle';
+        }
+
+        return formatBytes(bytesPerSecond) + '/s';
+      }
+
+      function updateBatchStatus(speedBytesPerSecond) {
+        batchProgress.textContent = completedFilesInBatch + '/' + totalFilesInBatch;
+        batchSpeed.textContent = formatSpeed(speedBytesPerSecond);
       }
 
       function createUploadCard(file) {
@@ -375,6 +409,7 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         const chunkSize = init.chunkSize || defaultChunkSize;
         const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
         let uploadedBytes = 0;
+        const startedAt = performance.now();
 
         try {
           for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
@@ -401,18 +436,23 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
             );
 
             uploadedBytes = end;
+            const elapsedSeconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
+            const speedBytesPerSecond = uploadedBytes / elapsedSeconds;
             updateCard(
               card,
               'Uploading',
               (uploadedBytes / file.size) * 100,
               formatBytes(uploadedBytes) + ' / ' + formatBytes(file.size),
             );
+            updateBatchStatus(speedBytesPerSecond);
           }
 
           await postJson('/upload/complete', { uploadId });
           updateCard(card, 'Saved to phone', 100, formatBytes(file.size));
+          updateBatchStatus(0);
         } catch (error) {
           await postJson('/upload/cancel', { uploadId }).catch(() => undefined);
+          updateBatchStatus(0);
           throw error;
         }
       }
@@ -432,6 +472,9 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         }
 
         pickButton.disabled = true;
+        totalFilesInBatch = files.length;
+        completedFilesInBatch = 0;
+        updateBatchStatus(0);
         setPickerState('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '...');
 
         for (const file of files) {
@@ -439,13 +482,17 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
 
           try {
             await uploadFile(file, card);
+            completedFilesInBatch += 1;
+            updateBatchStatus(0);
           } catch (error) {
             updateCard(card, 'Upload failed', 0, error.message || 'Unknown error');
+            updateBatchStatus(0);
           }
         }
 
         pickButton.disabled = false;
         fileInput.value = '';
+        updateBatchStatus(0);
         setPickerState('Done. You can upload more videos.');
       }
 
