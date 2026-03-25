@@ -53,6 +53,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const [activeSubtitleText, setActiveSubtitleText] = useState<string | null>(null);
   const lastLoadedUriRef = useRef(video.uri);
   const activeVideoUriRef = useRef(video.uri);
+  const subtitleCuesRef = useRef<SubtitleCue[]>([]);
   const currentDurationRef = useRef<number>(0);
   const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backgroundTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -63,11 +64,14 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const queuedPreviewTimeRef = useRef<number | null>(null);
   const lastPreviewedTimeRef = useRef<number | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const appHasFocusRef = useRef(true);
+  const playbackInterruptedRef = useRef(false);
   const seekBarWidthRef = useRef(1);
   const scrubTimeRef = useRef(0);
 
   useEffect(() => {
     activeVideoUriRef.current = video.uri;
+    playbackInterruptedRef.current = false;
     lastPersistedPositionRef.current = 0;
     previewRequestInFlightRef.current = false;
     queuedPreviewTimeRef.current = null;
@@ -79,6 +83,10 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   useEffect(() => {
     scrubTimeRef.current = scrubTime;
   }, [scrubTime]);
+
+  useEffect(() => {
+    subtitleCuesRef.current = subtitleCues;
+  }, [subtitleCues]);
 
   const persistPosition = (uri: string, positionSeconds: number, force = false) => {
     if (!force && Math.abs(positionSeconds - lastPersistedPositionRef.current) < 2) {
@@ -127,26 +135,45 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   }, []);
 
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
+    const handlePlaybackInterruption = () => {
+      playbackInterruptedRef.current = true;
+      appHasFocusRef.current = false;
+      clearScrubPreview();
+      setIsScrubbing(false);
+      persistPosition(activeVideoUriRef.current, player.currentTime, true);
+      player.pause();
+      setControlsVisible(true);
+    };
+
+    const changeSubscription = AppState.addEventListener('change', (nextAppState) => {
       const previousAppState = appStateRef.current;
       appStateRef.current = nextAppState;
 
       const isLeavingActive = previousAppState === 'active' && nextAppState !== 'active';
       const isReturningActive = previousAppState !== 'active' && nextAppState === 'active';
 
-      if (!isLeavingActive && !isReturningActive) {
+      if (isLeavingActive) {
+        handlePlaybackInterruption();
         return;
       }
 
-      clearScrubPreview();
-      setIsScrubbing(false);
-      persistPosition(activeVideoUriRef.current, player.currentTime, true);
-      player.pause();
-      setControlsVisible(true);
+      if (isReturningActive) {
+        appHasFocusRef.current = true;
+      }
+    });
+
+    const blurSubscription = AppState.addEventListener('blur', () => {
+      handlePlaybackInterruption();
+    });
+
+    const focusSubscription = AppState.addEventListener('focus', () => {
+      appHasFocusRef.current = true;
     });
 
     return () => {
-      subscription.remove();
+      changeSubscription.remove();
+      blurSubscription.remove();
+      focusSubscription.remove();
     };
   }, [player]);
 
@@ -215,6 +242,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   }, [player, video]);
 
   useEffect(() => {
+    const shouldAutoplay = () => appStateRef.current === 'active' && appHasFocusRef.current && !playbackInterruptedRef.current;
+
     if (lastLoadedUriRef.current === video.uri) {
       let cancelled = false;
 
@@ -229,8 +258,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         player.currentTime = savedPosition;
         setCurrentTime(savedPosition);
         setScrubTime(savedPosition);
-        setActiveSubtitleText(getActiveSubtitleText(subtitleCues, savedPosition));
-        player.play();
+        setActiveSubtitleText(getActiveSubtitleText(subtitleCuesRef.current, savedPosition));
+
+        if (shouldAutoplay()) {
+          player.play();
+        }
       }
 
       void resumeCurrentVideo();
@@ -261,8 +293,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         player.currentTime = savedPosition;
         setCurrentTime(savedPosition);
         setScrubTime(savedPosition);
-        setActiveSubtitleText(getActiveSubtitleText(subtitleCues, savedPosition));
-        player.play();
+        setActiveSubtitleText(getActiveSubtitleText(subtitleCuesRef.current, savedPosition));
+
+        if (shouldAutoplay()) {
+          player.play();
+        }
       }
     }
 
@@ -271,7 +306,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     return () => {
       cancelled = true;
     };
-  }, [player, subtitleCues, video.uri]);
+  }, [player, video.uri]);
 
   useEffect(() => {
     void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
@@ -308,6 +343,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       return;
     }
 
+    playbackInterruptedRef.current = false;
     player.play();
     setControlsVisible(true);
   }
@@ -318,6 +354,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       return;
     }
 
+    playbackInterruptedRef.current = false;
     player.play();
   }
 
