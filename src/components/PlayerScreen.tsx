@@ -4,7 +4,7 @@ import { Image, type ImageProps } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { createVideoPlayer, VideoView } from 'expo-video';
-import { Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
+import { AppState, Pressable, StyleSheet, Text, View, type AppStateStatus, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Rect } from 'react-native-svg';
 
@@ -62,6 +62,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const lastPersistedPositionRef = useRef(0);
   const queuedPreviewTimeRef = useRef<number | null>(null);
   const lastPreviewedTimeRef = useRef<number | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const seekBarWidthRef = useRef(1);
   const scrubTimeRef = useRef(0);
 
@@ -124,6 +125,30 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       previewThumbnailRequestIdRef.current += 1;
     };
   }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      const previousAppState = appStateRef.current;
+      appStateRef.current = nextAppState;
+
+      const isLeavingActive = previousAppState === 'active' && nextAppState !== 'active';
+      const isReturningActive = previousAppState !== 'active' && nextAppState === 'active';
+
+      if (!isLeavingActive && !isReturningActive) {
+        return;
+      }
+
+      clearScrubPreview();
+      setIsScrubbing(false);
+      persistPosition(activeVideoUriRef.current, player.currentTime, true);
+      player.pause();
+      setControlsVisible(true);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [player]);
 
   useEventListener(player, 'playToEnd', () => {
     persistPosition(video.uri, player.currentTime, true);
