@@ -586,10 +586,6 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
               <Text numberOfLines={1} style={styles.fileName}>
                 {video.name}
               </Text>
-              <Text style={styles.playlistMeta}>
-                {currentIndex + 1} / {videos.length}
-                {hasNextVideo ? ' - next plays automatically' : ' - last video in queue'}
-              </Text>
             </View>
 
             <View style={[styles.topActionSlot, styles.topActionSlotRight]}>
@@ -790,12 +786,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
-    textAlign: 'center',
-  },
-  playlistMeta: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 12,
-    fontWeight: '500',
     textAlign: 'center',
   },
   transportRow: {
