@@ -43,8 +43,8 @@ export function VideoCard({
       : 0;
 
   return (
-    <View style={[styles.card, selected && styles.cardSelected]}>
-      <Pressable onLongPress={onLongPress} onPress={onPlay} style={({ pressed }) => [styles.primaryAction, pressed && styles.primaryActionPressed]}>
+    <Pressable onLongPress={onLongPress} onPress={onPlay} style={({ pressed }) => [styles.card, selected && styles.cardSelected, pressed && styles.cardPressed]}>
+      <View style={styles.primaryAction}>
         <View style={styles.thumbnailWrap}>
           {isVideo && thumbnailSource ? (
             <Image contentFit="cover" source={thumbnailSource} style={styles.thumbnail} />
@@ -69,7 +69,7 @@ export function VideoCard({
             {isVideo ? `${formatDuration(savedPositionSeconds)} / ${formatDuration(durationSeconds)}` : 'Subtitle file'}
           </Text>
         </View>
-      </Pressable>
+      </View>
 
       {selectionMode ? (
         <View style={styles.rowActions}>
@@ -88,13 +88,19 @@ export function VideoCard({
             {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
           </View>
           <View style={styles.actionSlot}>
-            <Pressable onPress={onDelete} style={({ pressed }) => [styles.deleteButton, pressed && styles.deleteButtonPressed]}>
+            <Pressable
+              onPress={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+              style={({ pressed }) => [styles.deleteButton, pressed && styles.deleteButtonPressed]}
+            >
               <Text style={styles.deleteLabel}>Delete</Text>
             </Pressable>
           </View>
         </View>
       )}
-    </View>
+    </Pressable>
   );
 }
 
@@ -146,6 +152,9 @@ const styles = StyleSheet.create({
     borderColor: '#ead8c4',
     padding: 6,
   },
+  cardPressed: {
+    backgroundColor: '#f4e7da',
+  },
   cardSelected: {
     borderColor: '#1f6f68',
     backgroundColor: '#eef7f5',
@@ -158,9 +167,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 6,
     paddingVertical: 4,
-  },
-  primaryActionPressed: {
-    backgroundColor: '#f4e7da',
   },
   thumbnailWrap: {
     width: 54,
