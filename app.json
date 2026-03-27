@@ -2,7 +2,7 @@
   "expo": {
     "name": "VPlayer",
     "slug": "vplayer",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "default",
     "scheme": "vplayer",
     "icon": "./assets/icon.png",
