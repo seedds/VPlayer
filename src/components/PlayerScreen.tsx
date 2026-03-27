@@ -6,7 +6,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { createVideoPlayer, VideoView } from 'expo-video';
 import { AppState, Pressable, StyleSheet, Text, View, type AppStateStatus, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle, Path, Rect } from 'react-native-svg';
+import Svg, { Path, Rect } from 'react-native-svg';
 
 import { formatDuration } from '../lib/format';
 import { getSavedPlaybackPosition, savePlaybackDuration, savePlaybackPosition } from '../lib/playbackState';
@@ -706,10 +706,14 @@ function PauseIcon() {
 function LockIcon() {
   return (
     <Svg width={24} height={24} viewBox="0 0 20 20" fill="none">
-      <Rect x="4.3" y="8.8" width="11.4" height="7.9" rx="2" stroke="#FFFFFF" strokeWidth="1.8" />
-      <Path d="M7.1 8.8V6.8C7.1 5.26 8.4 4 10 4C11.6 4 12.9 5.26 12.9 6.8V8.8" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <Circle cx="10" cy="12.1" r="1" fill="#FFFFFF" />
-      <Path d="M10 13.1V14.5" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round" />
+      <Rect x="3.8" y="8.7" width="12.4" height="7.8" rx="1.8" fill="#FFFFFF" />
+      <Path
+        d="M6.2 8.7V6.25C6.2 4.46 7.89 3 10 3C12.11 3 13.8 4.46 13.8 6.25V8.7"
+        stroke="#FFFFFF"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </Svg>
   );
 }
@@ -717,11 +721,15 @@ function LockIcon() {
 function UnlockIcon() {
   return (
     <Svg width={24} height={24} viewBox="0 0 20 20" fill="none">
-      <Rect x="4.3" y="8.8" width="11.4" height="7.9" rx="2" stroke="#FFFFFF" strokeWidth="1.8" />
-      <Path d="M12.9 8.8V6.8C12.9 5.26 11.6 4 10 4C8.81 4 7.78 4.7 7.33 5.72" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <Path d="M7.33 5.72L5.55 7.5" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" />
-      <Circle cx="10" cy="12.1" r="1" fill="#FFFFFF" />
-      <Path d="M10 13.1V14.5" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round" />
+      <Rect x="3.8" y="8.7" width="12.4" height="7.8" rx="1.8" fill="#FFFFFF" />
+      <Path
+        d="M13.9 8.65V6.25C13.9 4.46 12.21 3 10.1 3C8.16 3 6.56 4.23 6.32 5.85"
+        stroke="#FFFFFF"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path d="M6.22 5.82V8.05C6.22 8.46 5.88 8.8 5.47 8.8" stroke="#FFFFFF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
