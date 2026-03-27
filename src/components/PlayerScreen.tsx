@@ -622,19 +622,21 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
                 {isControlsLocked ? <UnlockIcon /> : <LockIcon />}
               </Pressable>
 
-              {!isControlsLocked ? (
-                <View style={styles.transportRow}>
-                  <Pressable onPress={() => handleSeek(-10)} style={({ pressed }) => [styles.transportButton, pressed && styles.closeButtonPressed]}>
-                    <Text style={styles.transportButtonText}>-10</Text>
-                  </Pressable>
-                  <Pressable onPress={handleTogglePlayback} style={({ pressed }) => [styles.playPauseButton, pressed && styles.closeButtonPressed]}>
-                    {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                  </Pressable>
-                  <Pressable onPress={() => handleSeek(10)} style={({ pressed }) => [styles.transportButton, pressed && styles.closeButtonPressed]}>
-                    <Text style={styles.transportButtonText}>+10</Text>
-                  </Pressable>
-                </View>
-              ) : null}
+              <View pointerEvents={isControlsLocked ? 'none' : 'auto'} style={styles.transportRowSlot}>
+                {!isControlsLocked ? (
+                  <View style={styles.transportRow}>
+                    <Pressable onPress={() => handleSeek(-10)} style={({ pressed }) => [styles.transportButton, pressed && styles.closeButtonPressed]}>
+                      <Text style={styles.transportButtonText}>-10</Text>
+                    </Pressable>
+                    <Pressable onPress={handleTogglePlayback} style={({ pressed }) => [styles.playPauseButton, pressed && styles.closeButtonPressed]}>
+                      {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                    </Pressable>
+                    <Pressable onPress={() => handleSeek(10)} style={({ pressed }) => [styles.transportButton, pressed && styles.closeButtonPressed]}>
+                      <Text style={styles.transportButtonText}>+10</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
             </View>
           </View>
 
@@ -703,7 +705,7 @@ function PauseIcon() {
 
 function LockIcon() {
   return (
-    <Svg width={22} height={22} viewBox="0 0 20 20" fill="none">
+    <Svg width={24} height={24} viewBox="0 0 20 20" fill="none">
       <Rect x="4" y="9" width="12" height="8" rx="2" stroke="#FFFFFF" strokeWidth="1.8" />
       <Path d="M7 9V6.8C7 5.25 8.34 4 10 4C11.66 4 13 5.25 13 6.8V9" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" />
     </Svg>
@@ -712,7 +714,7 @@ function LockIcon() {
 
 function UnlockIcon() {
   return (
-    <Svg width={22} height={22} viewBox="0 0 20 20" fill="none">
+    <Svg width={24} height={24} viewBox="0 0 20 20" fill="none">
       <Rect x="4" y="9" width="12" height="8" rx="2" stroke="#FFFFFF" strokeWidth="1.8" />
       <Path d="M13 9V6.8C13 5.25 11.66 4 10 4C8.34 4 7 5.25 7 6.8" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" />
     </Svg>
@@ -800,6 +802,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 16,
   },
+  transportRowSlot: {
+    minHeight: 48,
+    justifyContent: 'center',
+  },
   bottomOverlay: {
     position: 'absolute',
     left: 0,
@@ -846,8 +852,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   lockButton: {
-    width: 48,
-    height: 48,
+    width: 56,
+    height: 56,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 999,
