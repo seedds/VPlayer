@@ -705,14 +705,12 @@ function PauseIcon() {
 
 function LockIcon() {
   return (
-    <Svg width={24} height={24} viewBox="0 0 20 20" fill="none">
-      <Rect x="3.8" y="8.7" width="12.4" height="7.8" rx="1.8" fill="#FFFFFF" />
+    <Svg width={24} height={24} viewBox="0 0 16 16" fill="none">
       <Path
-        d="M6.2 8.7V6.25C6.2 4.46 7.89 3 10 3C12.11 3 13.8 4.46 13.8 6.25V8.7"
-        stroke="#FFFFFF"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        fill="#FFFFFF"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M4 6V4C4 1.79086 5.79086 0 8 0C10.2091 0 12 1.79086 12 4V6H14V16H2V6H4ZM6 4C6 2.89543 6.89543 2 8 2C9.10457 2 10 2.89543 10 4V6H6V4ZM7 13V9H9V13H7Z"
       />
     </Svg>
   );
@@ -720,16 +718,13 @@ function LockIcon() {
 
 function UnlockIcon() {
   return (
-    <Svg width={24} height={24} viewBox="0 0 20 20" fill="none">
-      <Rect x="3.8" y="8.7" width="12.4" height="7.8" rx="1.8" fill="#FFFFFF" />
+    <Svg width={24} height={24} viewBox="0 0 16 16" fill="none">
       <Path
-        d="M13.9 8.65V6.25C13.9 4.46 12.21 3 10.1 3C8.16 3 6.56 4.23 6.32 5.85"
-        stroke="#FFFFFF"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        fill="#FFFFFF"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M11.5 2C10.6716 2 10 2.67157 10 3.5V6H13V16H1V6H8V3.5C8 1.567 9.567 0 11.5 0C13.433 0 15 1.567 15 3.5V4H13V3.5C13 2.67157 12.3284 2 11.5 2ZM9 10H5V12H9V10Z"
       />
-      <Path d="M6.22 5.82V8.05C6.22 8.46 5.88 8.8 5.47 8.8" stroke="#FFFFFF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
