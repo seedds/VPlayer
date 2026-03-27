@@ -61,6 +61,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const previewRequestInFlightRef = useRef(false);
   const previewThumbnailRequestIdRef = useRef(0);
   const lastBackgroundTapTimestampRef = useRef(0);
+  const lastBackgroundTapTouchCountRef = useRef(0);
+  const backgroundGestureTouchCountRef = useRef(0);
   const lastPersistedPositionRef = useRef(0);
   const queuedPreviewTimeRef = useRef<number | null>(null);
   const lastPreviewedTimeRef = useRef<number | null>(null);
@@ -129,6 +131,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         backgroundTapTimeoutRef.current = null;
       }
 
+      lastBackgroundTapTouchCountRef.current = 0;
+      backgroundGestureTouchCountRef.current = 0;
       previewRequestInFlightRef.current = false;
       queuedPreviewTimeRef.current = null;
       previewThumbnailRequestIdRef.current += 1;
@@ -377,30 +381,60 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     }
   }
 
-  function handleBackgroundTap(singleTapAction: () => void) {
+  function updateBackgroundGestureTouchCount(event: GestureResponderEvent) {
+    const touchCount = Math.max(event.nativeEvent.touches.length, event.nativeEvent.changedTouches.length);
+    backgroundGestureTouchCountRef.current = Math.max(backgroundGestureTouchCountRef.current, touchCount);
+  }
+
+  function resetBackgroundGestureTouchCount() {
+    backgroundGestureTouchCountRef.current = 0;
+  }
+
+  function toggleControlsLockFromGesture() {
+    clearScrubPreview();
+    setIsScrubbing(false);
+    setIsControlsLocked((locked) => !locked);
+    setControlsVisible(true);
+  }
+
+  function handleBackgroundTap(singleTapAction: () => void, touchCount: number) {
     if (isScrubbing) {
       return;
     }
 
     const resolvedSingleTapAction = isControlsLocked ? () => {} : singleTapAction;
+    const normalizedTouchCount = touchCount >= 2 ? 2 : 1;
 
     const now = Date.now();
     const isDoubleTap =
       backgroundTapTimeoutRef.current !== null &&
-      now - lastBackgroundTapTimestampRef.current <= BACKGROUND_DOUBLE_TAP_DELAY_MS;
+      now - lastBackgroundTapTimestampRef.current <= BACKGROUND_DOUBLE_TAP_DELAY_MS &&
+      lastBackgroundTapTouchCountRef.current === normalizedTouchCount;
 
     if (isDoubleTap) {
       clearPendingBackgroundTap();
       lastBackgroundTapTimestampRef.current = 0;
+      lastBackgroundTapTouchCountRef.current = 0;
+
+      if (normalizedTouchCount >= 2) {
+        toggleControlsLockFromGesture();
+        return;
+      }
+
       handleTogglePlaybackWithoutControls();
       return;
     }
 
     lastBackgroundTapTimestampRef.current = now;
+    lastBackgroundTapTouchCountRef.current = normalizedTouchCount;
     clearPendingBackgroundTap();
     backgroundTapTimeoutRef.current = setTimeout(() => {
       backgroundTapTimeoutRef.current = null;
-      resolvedSingleTapAction();
+      lastBackgroundTapTouchCountRef.current = 0;
+
+      if (normalizedTouchCount === 1) {
+        resolvedSingleTapAction();
+      }
     }, BACKGROUND_DOUBLE_TAP_DELAY_MS);
   }
 
@@ -475,12 +509,30 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setControlsVisible(false);
   }
 
-  function handleVisibleBackgroundTap() {
-    handleBackgroundTap(handleHideControls);
+  function handleBackgroundResponderGrant(event: GestureResponderEvent) {
+    updateBackgroundGestureTouchCount(event);
   }
 
-  function handleHiddenBackgroundTap() {
-    handleBackgroundTap(handleToggleControls);
+  function handleBackgroundResponderTouchStart(event: GestureResponderEvent) {
+    updateBackgroundGestureTouchCount(event);
+  }
+
+  function handleVisibleBackgroundResponderRelease(event: GestureResponderEvent) {
+    updateBackgroundGestureTouchCount(event);
+    const touchCount = backgroundGestureTouchCountRef.current || 1;
+    resetBackgroundGestureTouchCount();
+    handleBackgroundTap(handleHideControls, touchCount);
+  }
+
+  function handleHiddenBackgroundResponderRelease(event: GestureResponderEvent) {
+    updateBackgroundGestureTouchCount(event);
+    const touchCount = backgroundGestureTouchCountRef.current || 1;
+    resetBackgroundGestureTouchCount();
+    handleBackgroundTap(handleToggleControls, touchCount);
+  }
+
+  function handleBackgroundResponderTerminate() {
+    resetBackgroundGestureTouchCount();
   }
 
   function handleSeekBarLayout(event: LayoutChangeEvent) {
@@ -587,7 +639,14 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
       {controlsVisible ? (
         <>
-          <Pressable onPress={handleVisibleBackgroundTap} style={styles.dismissTapArea} />
+          <View
+            onResponderGrant={handleBackgroundResponderGrant}
+            onResponderRelease={handleVisibleBackgroundResponderRelease}
+            onResponderTerminate={handleBackgroundResponderTerminate}
+            onStartShouldSetResponder={() => !isScrubbing}
+            onTouchStart={handleBackgroundResponderTouchStart}
+            style={styles.dismissTapArea}
+          />
 
           {!isControlsLocked ? (
             <View style={[styles.topOverlay, { paddingTop: insets.top + 10 }]}> 
@@ -680,7 +739,14 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
           ) : null}
         </>
       ) : (
-        <Pressable onPress={handleHiddenBackgroundTap} style={styles.showTapArea} />
+        <View
+          onResponderGrant={handleBackgroundResponderGrant}
+          onResponderRelease={handleHiddenBackgroundResponderRelease}
+          onResponderTerminate={handleBackgroundResponderTerminate}
+          onStartShouldSetResponder={() => !isScrubbing}
+          onTouchStart={handleBackgroundResponderTouchStart}
+          style={styles.showTapArea}
+        />
       )}
     </View>
   );
