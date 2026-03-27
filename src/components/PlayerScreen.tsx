@@ -44,6 +44,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const hasNextVideo = currentIndex < videos.length - 1;
   const [player] = useState(() => createVideoPlayer(video.uri));
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [isControlsLocked, setIsControlsLocked] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -107,7 +108,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       clearTimeout(autoHideTimeoutRef.current);
     }
 
-    if (controlsVisible && isPlaying && !isScrubbing) {
+    if (controlsVisible && isPlaying && !isScrubbing && !isControlsLocked) {
       autoHideTimeoutRef.current = setTimeout(() => {
         setControlsVisible(false);
       }, 2500);
@@ -119,7 +120,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         autoHideTimeoutRef.current = null;
       }
     };
-  }, [controlsVisible, isPlaying, isScrubbing]);
+  }, [controlsVisible, isControlsLocked, isPlaying, isScrubbing]);
 
   useEffect(() => {
     return () => {
@@ -140,6 +141,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       appHasFocusRef.current = false;
       clearScrubPreview();
       setIsScrubbing(false);
+      setIsControlsLocked(false);
       persistPosition(activeVideoUriRef.current, player.currentTime, true);
       player.pause();
       setControlsVisible(true);
@@ -348,6 +350,16 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setControlsVisible(true);
   }
 
+  function handleLockControls() {
+    setIsControlsLocked(true);
+    setControlsVisible(true);
+  }
+
+  function handleUnlockControls() {
+    setIsControlsLocked(false);
+    setControlsVisible(true);
+  }
+
   function handleTogglePlaybackWithoutControls() {
     if (player.playing) {
       player.pause();
@@ -370,6 +382,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       return;
     }
 
+    const resolvedSingleTapAction = isControlsLocked ? () => {} : singleTapAction;
+
     const now = Date.now();
     const isDoubleTap =
       backgroundTapTimeoutRef.current !== null &&
@@ -386,7 +400,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     clearPendingBackgroundTap();
     backgroundTapTimeoutRef.current = setTimeout(() => {
       backgroundTapTimeoutRef.current = null;
-      singleTapAction();
+      resolvedSingleTapAction();
     }, BACKGROUND_DOUBLE_TAP_DELAY_MS);
   }
 
@@ -549,7 +563,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
           style={[
             styles.subtitleOverlay,
             {
-              bottom: controlsVisible ? insets.bottom + 54 : insets.bottom + 14,
+              bottom: controlsVisible && !isControlsLocked ? insets.bottom + 54 : insets.bottom + 14,
             },
           ]}
         >
@@ -575,78 +589,93 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         <>
           <Pressable onPress={handleVisibleBackgroundTap} style={styles.dismissTapArea} />
 
-          <View style={[styles.topOverlay, { paddingTop: insets.top + 10 }]}> 
-            <View style={styles.topActionSlot}>
-              <Pressable onPress={handleClose} style={({ pressed }) => [styles.closeButton, pressed && styles.closeButtonPressed]}>
-                <Text style={styles.closeButtonText}>Back</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.titleWrap}>
-              <Text numberOfLines={1} style={styles.fileName}>
-                {video.name}
-              </Text>
-            </View>
-
-            <View style={[styles.topActionSlot, styles.topActionSlotRight]}>
-              {hasNextVideo ? (
-                <Pressable onPress={handleNext} style={({ pressed }) => [styles.nextButton, pressed && styles.closeButtonPressed]}>
-                  <Text style={styles.closeButtonText}>Next</Text>
+          {!isControlsLocked ? (
+            <View style={[styles.topOverlay, { paddingTop: insets.top + 10 }]}> 
+              <View style={styles.topActionSlot}>
+                <Pressable onPress={handleClose} style={({ pressed }) => [styles.closeButton, pressed && styles.closeButtonPressed]}>
+                  <Text style={styles.closeButtonText}>Back</Text>
                 </Pressable>
-              ) : null}
+              </View>
+
+              <View style={styles.titleWrap}>
+                <Text numberOfLines={1} style={styles.fileName}>
+                  {video.name}
+                </Text>
+              </View>
+
+              <View style={[styles.topActionSlot, styles.topActionSlotRight]}>
+                {hasNextVideo ? (
+                  <Pressable onPress={handleNext} style={({ pressed }) => [styles.nextButton, pressed && styles.closeButtonPressed]}>
+                    <Text style={styles.closeButtonText}>Next</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             </View>
-          </View>
+          ) : null}
 
           <View style={styles.centerOverlay}>
-            <View style={styles.transportRow}>
-              <Pressable onPress={() => handleSeek(-10)} style={({ pressed }) => [styles.transportButton, pressed && styles.closeButtonPressed]}>
-                <Text style={styles.transportButtonText}>-10</Text>
+            <View style={styles.centerControlStack}>
+              <Pressable
+                onPress={isControlsLocked ? handleUnlockControls : handleLockControls}
+                style={({ pressed }) => [styles.lockButton, pressed && styles.closeButtonPressed]}
+              >
+                {isControlsLocked ? <UnlockIcon /> : <LockIcon />}
               </Pressable>
-              <Pressable onPress={handleTogglePlayback} style={({ pressed }) => [styles.playPauseButton, pressed && styles.closeButtonPressed]}>
-                {isPlaying ? <PauseIcon /> : <PlayIcon />}
-              </Pressable>
-              <Pressable onPress={() => handleSeek(10)} style={({ pressed }) => [styles.transportButton, pressed && styles.closeButtonPressed]}>
-                <Text style={styles.transportButtonText}>+10</Text>
-              </Pressable>
+
+              {!isControlsLocked ? (
+                <View style={styles.transportRow}>
+                  <Pressable onPress={() => handleSeek(-10)} style={({ pressed }) => [styles.transportButton, pressed && styles.closeButtonPressed]}>
+                    <Text style={styles.transportButtonText}>-10</Text>
+                  </Pressable>
+                  <Pressable onPress={handleTogglePlayback} style={({ pressed }) => [styles.playPauseButton, pressed && styles.closeButtonPressed]}>
+                    {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                  </Pressable>
+                  <Pressable onPress={() => handleSeek(10)} style={({ pressed }) => [styles.transportButton, pressed && styles.closeButtonPressed]}>
+                    <Text style={styles.transportButtonText}>+10</Text>
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
           </View>
 
-          <View style={[styles.bottomOverlay, { paddingBottom: insets.bottom + 12 }]}> 
-            <View
-              style={[
-                styles.seekBarShell,
-                {
-                  marginLeft: insets.left,
-                  marginRight: insets.right,
-                },
-              ]}
-            >
-              {isScrubbing && scrubPreviewSource ? (
-                <View pointerEvents="none" style={[styles.scrubPreviewPopup, { left: scrubPreviewLeft }]}> 
-                  <Image contentFit="cover" source={scrubPreviewSource} style={styles.scrubPreviewImage} transition={0} />
-                </View>
-              ) : null}
-
+          {!isControlsLocked ? (
+            <View style={[styles.bottomOverlay, { paddingBottom: insets.bottom + 12 }]}> 
               <View
-                onLayout={handleSeekBarLayout}
-                onMoveShouldSetResponder={() => true}
-                onResponderGrant={handleSeekBarGrant}
-                onResponderMove={handleSeekBarMove}
-                onResponderRelease={handleSeekBarRelease}
-                onResponderTerminate={handleSeekBarTerminate}
-                onStartShouldSetResponder={() => true}
-                style={styles.seekBarTouchArea}
+                style={[
+                  styles.seekBarShell,
+                  {
+                    marginLeft: insets.left,
+                    marginRight: insets.right,
+                  },
+                ]}
               >
-                <View style={styles.seekBarTrack}>
-                  <View style={[styles.seekBarProgress, { width: `${progressPercent * 100}%` }]} />
-                </View>
-                <View pointerEvents="none" style={styles.seekBarLabelRow}>
-                  <Text style={styles.seekBarTimeText}>{formatDuration(displayedTime)}</Text>
-                  <Text style={styles.seekBarTimeText}>-{formatDuration(remainingTime)}</Text>
+                {isScrubbing && scrubPreviewSource ? (
+                  <View pointerEvents="none" style={[styles.scrubPreviewPopup, { left: scrubPreviewLeft }]}> 
+                    <Image contentFit="cover" source={scrubPreviewSource} style={styles.scrubPreviewImage} transition={0} />
+                  </View>
+                ) : null}
+
+                <View
+                  onLayout={handleSeekBarLayout}
+                  onMoveShouldSetResponder={() => true}
+                  onResponderGrant={handleSeekBarGrant}
+                  onResponderMove={handleSeekBarMove}
+                  onResponderRelease={handleSeekBarRelease}
+                  onResponderTerminate={handleSeekBarTerminate}
+                  onStartShouldSetResponder={() => true}
+                  style={styles.seekBarTouchArea}
+                >
+                  <View style={styles.seekBarTrack}>
+                    <View style={[styles.seekBarProgress, { width: `${progressPercent * 100}%` }]} />
+                  </View>
+                  <View pointerEvents="none" style={styles.seekBarLabelRow}>
+                    <Text style={styles.seekBarTimeText}>{formatDuration(displayedTime)}</Text>
+                    <Text style={styles.seekBarTimeText}>-{formatDuration(remainingTime)}</Text>
+                  </View>
                 </View>
               </View>
             </View>
-          </View>
+          ) : null}
         </>
       ) : (
         <Pressable onPress={handleHiddenBackgroundTap} style={styles.showTapArea} />
@@ -668,6 +697,24 @@ function PauseIcon() {
     <Svg width={20} height={20} viewBox="0 0 20 20" fill="none">
       <Rect x="5" y="4" width="3.5" height="12" rx="1" fill="#FFFFFF" />
       <Rect x="11.5" y="4" width="3.5" height="12" rx="1" fill="#FFFFFF" />
+    </Svg>
+  );
+}
+
+function LockIcon() {
+  return (
+    <Svg width={22} height={22} viewBox="0 0 20 20" fill="none">
+      <Rect x="4" y="9" width="12" height="8" rx="2" stroke="#FFFFFF" strokeWidth="1.8" />
+      <Path d="M7 9V6.8C7 5.25 8.34 4 10 4C11.66 4 13 5.25 13 6.8V9" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+function UnlockIcon() {
+  return (
+    <Svg width={22} height={22} viewBox="0 0 20 20" fill="none">
+      <Rect x="4" y="9" width="12" height="8" rx="2" stroke="#FFFFFF" strokeWidth="1.8" />
+      <Path d="M13 9V6.8C13 5.25 11.66 4 10 4C8.34 4 7 5.25 7 6.8" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" />
     </Svg>
   );
 }
@@ -749,6 +796,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
+  centerControlStack: {
+    alignItems: 'center',
+    gap: 16,
+  },
   bottomOverlay: {
     position: 'absolute',
     left: 0,
@@ -793,6 +844,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 14,
     alignItems: 'center',
+  },
+  lockButton: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
+    backgroundColor: 'rgba(8,12,16,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   transportButton: {
     minWidth: 64,
