@@ -110,7 +110,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       clearTimeout(autoHideTimeoutRef.current);
     }
 
-    if (controlsVisible && isPlaying && !isScrubbing && !isControlsLocked) {
+    if (controlsVisible && isPlaying && !isScrubbing) {
       autoHideTimeoutRef.current = setTimeout(() => {
         setControlsVisible(false);
       }, 2500);
@@ -402,7 +402,6 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       return;
     }
 
-    const resolvedSingleTapAction = isControlsLocked ? () => {} : singleTapAction;
     const normalizedTouchCount = touchCount >= 2 ? 2 : 1;
 
     const now = Date.now();
@@ -433,7 +432,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       lastBackgroundTapTouchCountRef.current = 0;
 
       if (normalizedTouchCount === 1) {
-        resolvedSingleTapAction();
+        singleTapAction();
       }
     }, BACKGROUND_DOUBLE_TAP_DELAY_MS);
   }
