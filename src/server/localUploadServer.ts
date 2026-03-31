@@ -4,7 +4,6 @@ import * as FileSystem from 'expo-file-system/legacy';
 import type { UploadActivity } from '../lib/types';
 import {
   ALLOWED_UPLOAD_EXTENSIONS,
-  ALLOWED_VIDEO_EXTENSIONS,
   clearTempUploads,
   createUploadTarget,
   ensureAppDirectories,
@@ -20,6 +19,7 @@ type UploadSession = {
   tempUri: string;
   totalSize: number;
   receivedBytes: number;
+  expectedChunkIndex: number;
 };
 
 type StartServerOptions = {
@@ -29,7 +29,6 @@ type StartServerOptions = {
 };
 
 type NitroRequestLike = {
-  binaryBody?: ArrayBuffer;
   body?: string;
   headers: Record<string, string>;
   method: string;
@@ -277,6 +276,7 @@ class LocalUploadServer {
         tempUri: target.tempUri,
         totalSize,
         receivedBytes: 0,
+        expectedChunkIndex: 0,
       });
 
       this.emit({
@@ -318,6 +318,10 @@ class LocalUploadServer {
         throw new Error('Chunk index out of range.');
       }
 
+      if (chunkIndex !== session.expectedChunkIndex) {
+        throw new Error(`Unexpected chunk order. Expected chunk ${session.expectedChunkIndex}.`);
+      }
+
       const uploadedFilePath = readHeader(headers, 'x-uploaded-file-path');
       const uploadedChunkFile = new File(normalizeFileUri(uploadedFilePath));
 
@@ -328,12 +332,17 @@ class LocalUploadServer {
       const chunkBytes = await uploadedChunkFile.bytes();
       const tempFile = new File(session.tempUri);
 
+      if (session.receivedBytes + chunkBytes.byteLength > session.totalSize) {
+        throw new Error('Chunk exceeds declared upload size.');
+      }
+
       if (!tempFile.exists) {
         tempFile.create({ overwrite: true });
       }
 
       tempFile.write(chunkBytes, { append: session.receivedBytes > 0 });
       session.receivedBytes += chunkBytes.byteLength;
+      session.expectedChunkIndex += 1;
       uploadedChunkFile.delete();
 
       this.emit({

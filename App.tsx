@@ -33,8 +33,8 @@ import {
   THUMBNAIL_MAX_WIDTH,
   THUMBNAIL_TIME_SECONDS,
 } from './src/lib/videoThumbnails';
-import type { LibraryItem, StorageSnapshot, UploadActivity, VideoItem } from './src/lib/types';
-import { deleteLibraryItem, ensureAppDirectories, getStorageSnapshot, getVideoItems, listLibraryItems } from './src/lib/videoLibrary';
+import type { LibraryItem, UploadActivity, VideoItem } from './src/lib/types';
+import { deleteLibraryItem, ensureAppDirectories, getVideoItems, listLibraryItems } from './src/lib/videoLibrary';
 import { DEFAULT_SERVER_PORT, localUploadServer } from './src/server/localUploadServer';
 
 type ActiveTab = 'library' | 'upload';
@@ -58,8 +58,6 @@ export default function App() {
   const [selectedVideoUris, setSelectedVideoUris] = useState<Set<string>>(() => new Set());
   const [activity, setActivity] = useState<UploadActivity>(INITIAL_ACTIVITY);
   const [ipAddress, setIpAddress] = useState<string | null>(null);
-  const [networkHint, setNetworkHint] = useState('Checking network...');
-  const [storage, setStorage] = useState<StorageSnapshot | null>(null);
   const [serverRunning, setServerRunning] = useState(false);
   const [activePort, setActivePort] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,7 +65,6 @@ export default function App() {
 
   const isAndroidTablet = useMemo(() => isAndroidTabletLayout(width, height), [height, width]);
   const progress = getUploadProgress(activity);
-  const currentPort = useMemo(() => normalizePort(portInput, DEFAULT_SERVER_PORT), [portInput]);
   const serverUrl = serverRunning && ipAddress && activePort ? `http://${ipAddress}:${activePort}` : null;
   const videoItems = useMemo(() => getVideoItems(videos), [videos]);
   const selectedVideo = selectedIndex !== null ? videoItems[selectedIndex] ?? null : null;
@@ -75,9 +72,8 @@ export default function App() {
   const shouldKeepAwakeForUpload = activity.status === 'receiving';
 
   const refreshLibrary = useCallback(async () => {
-    const [items, snapshot, playbackState] = await Promise.all([listLibraryItems(), getStorageSnapshot(), getAllPlaybackState()]);
+    const [items, playbackState] = await Promise.all([listLibraryItems(), getAllPlaybackState()]);
     setVideos(items);
-    setStorage(snapshot);
     setPlaybackStateByUri(playbackState);
   }, []);
 
@@ -149,24 +145,17 @@ export default function App() {
       setIpAddress(address && address !== '0.0.0.0' ? address : null);
 
       if (!networkState.isConnected) {
-        setNetworkHint('Connect your device and computer to the same Wi-Fi network.');
         return;
       }
 
       if (networkState.type !== Network.NetworkStateType.WIFI && networkState.type !== Network.NetworkStateType.ETHERNET) {
-        setNetworkHint('Wi-Fi is recommended. Mobile data may not expose a local upload address.');
         return;
       }
 
       if (!address || address === '0.0.0.0') {
-        setNetworkHint('Server is running. Discovering device IP...');
         return;
       }
-
-      setNetworkHint('Open the upload address from a browser on the same network.');
-    } catch {
-      setNetworkHint('Could not detect the device IP automatically yet.');
-    }
+    } catch {}
   }, []);
 
   const probeExistingServer = useCallback(async (port: number): Promise<{ ok: boolean; reportedPort: number | null }> => {
@@ -661,8 +650,6 @@ export default function App() {
             ) : (
               <UploadView
                 activity={activity}
-                currentPort={currentPort}
-                isAndroidTablet={isAndroidTablet}
                 onRestartServer={() => void startServer(normalizePort(portInput, DEFAULT_SERVER_PORT))}
                 onStopServer={() => void stopServer()}
                 portInput={portInput}
@@ -810,8 +797,6 @@ function LibraryView({
 
 type UploadViewProps = {
   activity: UploadActivity;
-  currentPort: number;
-  isAndroidTablet: boolean;
   onRestartServer: () => void;
   onStopServer: () => void;
   portInput: string;
@@ -823,8 +808,6 @@ type UploadViewProps = {
 
 function UploadView({
   activity,
-  currentPort,
-  isAndroidTablet,
   onRestartServer,
   onStopServer,
   portInput,
@@ -936,22 +919,6 @@ function ActionButton({ disabled = false, label, onPress, tone }: ActionButtonPr
     >
       <Text style={styles.actionButtonText}>{label}</Text>
     </Pressable>
-  );
-}
-
-type StepRowProps = {
-  number: string;
-  text: string;
-};
-
-function StepRow({ number, text }: StepRowProps) {
-  return (
-    <View style={styles.stepRow}>
-      <View style={styles.stepBubble}>
-        <Text style={styles.stepBubbleText}>{number}</Text>
-      </View>
-      <Text style={styles.stepText}>{text}</Text>
-    </View>
   );
 }
 
@@ -1183,33 +1150,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
-  },
-  stepsList: {
-    gap: 12,
-  },
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  stepBubble: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f4e0d2',
-  },
-  stepBubbleText: {
-    color: '#9d4a2a',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  stepText: {
-    flex: 1,
-    color: '#5c534b',
-    fontSize: 15,
-    lineHeight: 22,
   },
   bottomTabBar: {
     flexDirection: 'row',

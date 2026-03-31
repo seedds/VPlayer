@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import type { LibraryItem, StorageSnapshot, VideoItem } from './types';
+import type { LibraryItem, VideoItem } from './types';
 
 export const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm', '.mkv'];
 export const ALLOWED_SUBTITLE_EXTENSIONS = ['.srt'];
@@ -154,16 +154,4 @@ export async function findMatchingSubtitleUri(video: VideoItem): Promise<string 
 
 export async function deleteLibraryItem(uri: string): Promise<void> {
   await FileSystem.deleteAsync(uri, { idempotent: true });
-}
-
-export async function getStorageSnapshot(): Promise<StorageSnapshot> {
-  const [freeBytes, totalBytes] = await Promise.all([
-    FileSystem.getFreeDiskStorageAsync(),
-    FileSystem.getTotalDiskCapacityAsync(),
-  ]);
-
-  return {
-    freeBytes,
-    totalBytes,
-  };
 }

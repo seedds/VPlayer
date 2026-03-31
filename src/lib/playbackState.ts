@@ -10,6 +10,7 @@ export type PlaybackStateEntry = {
 export type PlaybackStateMap = Record<string, PlaybackStateEntry>;
 
 let playbackStateCache: PlaybackStateMap | null = null;
+let playbackStateMutationQueue: Promise<void> = Promise.resolve();
 
 function getPlaybackStateFileUri(): string {
   if (!FileSystem.documentDirectory) {
@@ -48,6 +49,23 @@ async function writePlaybackState(nextState: PlaybackStateMap): Promise<void> {
   await FileSystem.writeAsStringAsync(getPlaybackStateFileUri(), JSON.stringify(nextState));
 }
 
+async function updatePlaybackState(updater: (state: PlaybackStateMap) => PlaybackStateMap | null): Promise<void> {
+  playbackStateMutationQueue = playbackStateMutationQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const state = await loadPlaybackState();
+      const nextState = updater(state);
+
+      if (!nextState) {
+        return;
+      }
+
+      await writePlaybackState(nextState);
+    });
+
+  await playbackStateMutationQueue;
+}
+
 export async function getSavedPlaybackPosition(uri: string): Promise<number> {
   const state = await loadPlaybackState();
   return state[uri]?.positionSeconds ?? 0;
@@ -62,22 +80,22 @@ export async function savePlaybackPosition(uri: string, positionSeconds: number,
     return;
   }
 
-  const state = await loadPlaybackState();
-  const previousEntry = state[uri];
-  const nextState: PlaybackStateMap = {
-    ...state,
-    [uri]: {
-      durationSeconds:
-        typeof durationSeconds === 'number' && Number.isFinite(durationSeconds) && durationSeconds >= 0
-          ? durationSeconds
-          : previousEntry?.durationSeconds,
-      hasStartedPlayback: true,
-      positionSeconds,
-      updatedAt: Date.now(),
-    },
-  };
+  await updatePlaybackState((state) => {
+    const previousEntry = state[uri];
 
-  await writePlaybackState(nextState);
+    return {
+      ...state,
+      [uri]: {
+        durationSeconds:
+          typeof durationSeconds === 'number' && Number.isFinite(durationSeconds) && durationSeconds >= 0
+            ? durationSeconds
+            : previousEntry?.durationSeconds,
+        hasStartedPlayback: true,
+        positionSeconds,
+        updatedAt: Date.now(),
+      },
+    };
+  });
 }
 
 export async function savePlaybackDuration(uri: string, durationSeconds: number): Promise<void> {
@@ -85,48 +103,45 @@ export async function savePlaybackDuration(uri: string, durationSeconds: number)
     return;
   }
 
-  const state = await loadPlaybackState();
-  const previousEntry = state[uri];
+  await updatePlaybackState((state) => {
+    const previousEntry = state[uri];
 
-  const nextState: PlaybackStateMap = {
-    ...state,
-    [uri]: {
-      durationSeconds,
-      hasStartedPlayback: previousEntry?.hasStartedPlayback ?? false,
-      positionSeconds: previousEntry?.positionSeconds ?? 0,
-      updatedAt: Date.now(),
-    },
-  };
-
-  await writePlaybackState(nextState);
+    return {
+      ...state,
+      [uri]: {
+        durationSeconds,
+        hasStartedPlayback: previousEntry?.hasStartedPlayback ?? false,
+        positionSeconds: previousEntry?.positionSeconds ?? 0,
+        updatedAt: Date.now(),
+      },
+    };
+  });
 }
 
 export async function clearPlaybackPosition(uri: string): Promise<void> {
-  const state = await loadPlaybackState();
+  await updatePlaybackState((state) => {
+    if (!(uri in state)) {
+      return null;
+    }
 
-  if (!(uri in state)) {
-    return;
-  }
-
-  const nextState = { ...state };
-  delete nextState[uri];
-  await writePlaybackState(nextState);
+    const nextState = { ...state };
+    delete nextState[uri];
+    return nextState;
+  });
 }
 
 export async function clearAllPlaybackProgress(): Promise<void> {
-  const state = await loadPlaybackState();
-
-  const nextState: PlaybackStateMap = Object.fromEntries(
-    Object.entries(state).map(([uri, entry]) => [
-      uri,
-      {
-        durationSeconds: entry.durationSeconds,
-        hasStartedPlayback: false,
-        positionSeconds: 0,
-        updatedAt: Date.now(),
-      } satisfies PlaybackStateEntry,
-    ]),
+  await updatePlaybackState((state) =>
+    Object.fromEntries(
+      Object.entries(state).map(([uri, entry]) => [
+        uri,
+        {
+          durationSeconds: entry.durationSeconds,
+          hasStartedPlayback: false,
+          positionSeconds: 0,
+          updatedAt: Date.now(),
+        } satisfies PlaybackStateEntry,
+      ]),
+    ),
   );
-
-  await writePlaybackState(nextState);
 }

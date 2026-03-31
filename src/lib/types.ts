@@ -30,8 +30,3 @@ export type UploadActivity = {
   receivedBytes?: number;
   totalBytes?: number;
 };
-
-export type StorageSnapshot = {
-  freeBytes: number;
-  totalBytes: number;
-};

@@ -37,6 +37,26 @@ const BACKGROUND_DOUBLE_TAP_DELAY_MS = 250;
 const SCRUB_PREVIEW_DEDUPE_THRESHOLD_SECONDS = 0.05;
 const SCRUB_PREVIEW_POPUP_WIDTH = 160;
 const SCRUB_PREVIEW_POPUP_HEIGHT = 90;
+const RESUME_NEAR_END_THRESHOLD_SECONDS = 0.25;
+const RESUME_END_PADDING_SECONDS = 1;
+
+function getResumePosition(savedPosition: number, duration: number): number {
+  if (!Number.isFinite(savedPosition) || savedPosition <= 0) {
+    return 0;
+  }
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return savedPosition;
+  }
+
+  const clampedPosition = Math.max(0, Math.min(savedPosition, duration));
+
+  if (clampedPosition < duration - RESUME_NEAR_END_THRESHOLD_SECONDS) {
+    return clampedPosition;
+  }
+
+  return Math.max(duration - Math.min(RESUME_END_PADDING_SECONDS, duration / 2), 0);
+}
 
 export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSelectIndex, videos }: PlayerScreenProps) {
   const insets = useSafeAreaInsets();
@@ -80,6 +100,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     queuedPreviewTimeRef.current = null;
     previewThumbnailRequestIdRef.current += 1;
     lastPreviewedTimeRef.current = null;
+    setSubtitleCues([]);
+    setActiveSubtitleText(null);
     setScrubPreviewSource(null);
   }, [video.uri]);
 
@@ -261,10 +283,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         }
 
         currentDurationRef.current = player.duration;
-        player.currentTime = savedPosition;
-        setCurrentTime(savedPosition);
-        setScrubTime(savedPosition);
-        setActiveSubtitleText(getActiveSubtitleText(subtitleCuesRef.current, savedPosition));
+        const resumePosition = getResumePosition(savedPosition, currentDurationRef.current);
+        player.currentTime = resumePosition;
+        setCurrentTime(resumePosition);
+        setScrubTime(resumePosition);
+        setActiveSubtitleText(getActiveSubtitleText(subtitleCuesRef.current, resumePosition));
 
         if (shouldAutoplay()) {
           player.play();
@@ -296,10 +319,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       if (!cancelled) {
         lastLoadedUriRef.current = video.uri;
         currentDurationRef.current = player.duration;
-        player.currentTime = savedPosition;
-        setCurrentTime(savedPosition);
-        setScrubTime(savedPosition);
-        setActiveSubtitleText(getActiveSubtitleText(subtitleCuesRef.current, savedPosition));
+        const resumePosition = getResumePosition(savedPosition, currentDurationRef.current);
+        player.currentTime = resumePosition;
+        setCurrentTime(resumePosition);
+        setScrubTime(resumePosition);
+        setActiveSubtitleText(getActiveSubtitleText(subtitleCuesRef.current, resumePosition));
 
         if (shouldAutoplay()) {
           player.play();
