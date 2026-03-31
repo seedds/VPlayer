@@ -31,12 +31,6 @@ export function VideoCard({
   video,
 }: VideoCardProps) {
   const isVideo = video.kind === 'video';
-  const isPlayed =
-    isVideo &&
-    typeof durationSeconds === 'number' &&
-    durationSeconds > 0 &&
-    typeof savedPositionSeconds === 'number' &&
-    savedPositionSeconds / durationSeconds >= 0.95;
   const playbackProgress =
     isVideo && typeof durationSeconds === 'number' && durationSeconds > 0 && typeof savedPositionSeconds === 'number'
       ? Math.max(0, Math.min(1, savedPositionSeconds / durationSeconds))
@@ -53,12 +47,6 @@ export function VideoCard({
               <Text style={styles.thumbnailPlaceholderText}>{isVideo ? 'Video' : 'SRT'}</Text>
             </View>
           )}
-
-          {isPlayed ? (
-            <View style={styles.playedBadge}>
-              <Text style={styles.playedBadgeText}>✓</Text>
-            </View>
-          ) : null}
         </View>
 
         <View style={styles.content}>
@@ -189,22 +177,6 @@ const styles = StyleSheet.create({
     color: '#f6f1eb',
     fontSize: 11,
     fontWeight: '700',
-  },
-  playedBadge: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#1f6f68',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  playedBadgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '800',
   },
   content: {
     flex: 1,
