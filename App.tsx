@@ -51,7 +51,8 @@ const INITIAL_ACTIVITY: UploadActivity = {
   updatedAt: Date.now(),
 };
 
-const THUMBNAIL_HYDRATION_CONCURRENCY = 4;
+const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
+const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
 
 export default function App() {
   const { width, height } = useWindowDimensions();
@@ -511,6 +512,7 @@ export default function App() {
     }
 
     let cancelled = false;
+    let runThumbnailUris: Set<string> | null = null;
 
     async function hydrateMissingThumbnails() {
       await pruneThumbnailCache(videoItems);
@@ -528,17 +530,20 @@ export default function App() {
         return;
       }
 
-      let nextIndex = 0;
+      runThumbnailUris = new Set(queuedVideos.map((video) => video.uri));
+
+      const retryCountsByUri = new Map<string, number>();
+      const queue = [...queuedVideos];
 
       const runWorker = async () => {
         while (!cancelled) {
-          const video = queuedVideos[nextIndex];
-
-          nextIndex += 1;
+          const video = queue.shift();
 
           if (!video) {
             return;
           }
+
+          let shouldReleaseJob = true;
 
           try {
             const cachedThumbnailUri = await getCachedThumbnailUri(video);
@@ -550,6 +555,8 @@ export default function App() {
                   [video.uri]: { uri: cachedThumbnailUri },
                 }));
               }
+
+              retryCountsByUri.delete(video.uri);
 
               continue;
             }
@@ -565,7 +572,20 @@ export default function App() {
                 [video.uri]: { uri: thumbnailUri },
               }));
             }
+
+            retryCountsByUri.delete(video.uri);
           } catch {
+            const nextAttempt = (retryCountsByUri.get(video.uri) ?? 0) + 1;
+
+            if (!cancelled && nextAttempt < THUMBNAIL_HYDRATION_MAX_ATTEMPTS) {
+              retryCountsByUri.set(video.uri, nextAttempt);
+              queue.push(video);
+              shouldReleaseJob = false;
+              continue;
+            }
+
+            retryCountsByUri.delete(video.uri);
+
             if (!cancelled) {
               setThumbnailSourceByUri((current) => ({
                 ...current,
@@ -573,7 +593,9 @@ export default function App() {
               }));
             }
           } finally {
-            thumbnailJobUrisRef.current.delete(video.uri);
+            if (shouldReleaseJob) {
+              thumbnailJobUrisRef.current.delete(video.uri);
+            }
           }
         }
       };
@@ -587,6 +609,10 @@ export default function App() {
 
     return () => {
       cancelled = true;
+
+      runThumbnailUris?.forEach((uri) => {
+        thumbnailJobUrisRef.current.delete(uri);
+      });
     };
   }, [loading, videoItems]);
 
