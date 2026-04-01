@@ -44,6 +44,10 @@ async function loadPlaybackState(): Promise<PlaybackStateMap> {
   return playbackStateCache;
 }
 
+function clonePlaybackState(state: PlaybackStateMap): PlaybackStateMap {
+  return Object.fromEntries(Object.entries(state).map(([uri, entry]) => [uri, { ...entry }]));
+}
+
 async function writePlaybackState(nextState: PlaybackStateMap): Promise<void> {
   playbackStateCache = nextState;
   await FileSystem.writeAsStringAsync(getPlaybackStateFileUri(), JSON.stringify(nextState));
@@ -72,7 +76,7 @@ export async function getSavedPlaybackPosition(uri: string): Promise<number> {
 }
 
 export async function getAllPlaybackState(): Promise<PlaybackStateMap> {
-  return loadPlaybackState();
+  return clonePlaybackState(await loadPlaybackState());
 }
 
 export async function savePlaybackPosition(uri: string, positionSeconds: number, durationSeconds?: number): Promise<void> {

@@ -449,18 +449,44 @@ export default function App() {
   }, [activeTab, hydrateMissingDurations, loading, playbackStateByUri, videoItems]);
 
   useEffect(() => {
+    if (loading || activeTab !== 'library') {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function pruneStaleThumbnails() {
+      await pruneThumbnailCache(videoItems);
+
+      if (cancelled) {
+        return;
+      }
+    }
+
+    void pruneStaleThumbnails();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, loading, videoItems]);
+
+  useEffect(() => {
     if (loading || activeTab !== 'library' || videoItems.length === 0) {
+      return;
+    }
+
+    const pendingVideos = videoItems.filter((video) => thumbnailSourceByUri[video.uri] === undefined);
+
+    if (pendingVideos.length === 0) {
       return;
     }
 
     let cancelled = false;
 
     async function hydrateMissingThumbnails() {
-      await pruneThumbnailCache(videoItems);
-
-      for (const video of videoItems) {
-        if (cancelled || thumbnailSourceByUri[video.uri] !== undefined) {
-          continue;
+      for (const video of pendingVideos) {
+        if (cancelled) {
+          return;
         }
 
         const cachedThumbnailUri = await getCachedThumbnailUri(video);
@@ -519,7 +545,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, loading, playbackStateByUri, thumbnailSourceByUri, videoItems]);
+  }, [activeTab, loading, playbackStateByUri, videoItems]);
 
   useEffect(() => {
     if (!loading && activeTab === 'upload') {
