@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import { createVideoPlayer } from 'expo-video';
 
 import type { VideoThumbnail } from 'expo-video';
 
@@ -8,6 +9,15 @@ import type { VideoItem } from './types';
 export const THUMBNAIL_TIME_SECONDS = 60;
 export const THUMBNAIL_MAX_WIDTH = 240;
 export const THUMBNAIL_MAX_HEIGHT = 240;
+
+function getThumbnailCandidateTimes(durationSeconds?: number): number[] {
+  const preferredTime =
+    typeof durationSeconds === 'number' && Number.isFinite(durationSeconds) && durationSeconds > 0
+      ? Math.min(THUMBNAIL_TIME_SECONDS, Math.max(0, durationSeconds - 1))
+      : THUMBNAIL_TIME_SECONDS;
+
+  return preferredTime > 0 ? [preferredTime, 0] : [0];
+}
 
 function getDocumentRoot(): string {
   if (!FileSystem.documentDirectory) {
@@ -74,6 +84,37 @@ export async function persistThumbnail(video: VideoItem, thumbnail: VideoThumbna
   await FileSystem.moveAsync({ from: savedImage.uri, to: targetUri });
 
   return targetUri;
+}
+
+export async function generateThumbnailForVideo(video: VideoItem, durationSeconds?: number): Promise<string> {
+  const player = createVideoPlayer(video.uri);
+  let lastError: unknown = null;
+
+  try {
+    for (const time of getThumbnailCandidateTimes(durationSeconds)) {
+      try {
+        const thumbnails = await player.generateThumbnailsAsync([time], {
+          maxHeight: THUMBNAIL_MAX_HEIGHT,
+          maxWidth: THUMBNAIL_MAX_WIDTH,
+        });
+        const thumbnail = thumbnails[0] ?? null;
+
+        if (thumbnail) {
+          return await persistThumbnail(video, thumbnail);
+        }
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  } finally {
+    player.release();
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+
+  throw new Error('Thumbnail generation returned no image.');
 }
 
 export async function deleteThumbnailForVideo(video: VideoItem): Promise<void> {

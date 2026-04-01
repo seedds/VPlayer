@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createVideoPlayer } from 'expo-video';
 import { StatusBar } from 'expo-status-bar';
 import type { ImageProps } from 'expo-image';
@@ -33,12 +33,9 @@ import {
 } from './src/lib/playbackState';
 import {
   deleteThumbnailForVideo,
+  generateThumbnailForVideo,
   getCachedThumbnailUri,
-  persistThumbnail,
   pruneThumbnailCache,
-  THUMBNAIL_MAX_HEIGHT,
-  THUMBNAIL_MAX_WIDTH,
-  THUMBNAIL_TIME_SECONDS,
 } from './src/lib/videoThumbnails';
 import type { LibraryItem, UploadActivity, VideoItem } from './src/lib/types';
 import { deleteLibraryItem, ensureAppDirectories, getVideoItems, listLibraryItems } from './src/lib/videoLibrary';
@@ -53,6 +50,8 @@ const INITIAL_ACTIVITY: UploadActivity = {
   message: 'Starting local server...',
   updatedAt: Date.now(),
 };
+
+const THUMBNAIL_HYDRATION_CONCURRENCY = 2;
 
 export default function App() {
   const { width, height } = useWindowDimensions();
@@ -69,6 +68,8 @@ export default function App() {
   const [activePort, setActivePort] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [portInput, setPortInput] = useState(String(DEFAULT_SERVER_PORT));
+  const thumbnailSourceByUriRef = useRef<Record<string, ThumbnailSource | null | undefined>>({});
+  const thumbnailJobUrisRef = useRef<Set<string>>(new Set());
 
   const isAndroidTablet = useMemo(() => isAndroidTabletLayout(width, height), [height, width]);
   const progress = getUploadProgress(activity);
@@ -77,6 +78,10 @@ export default function App() {
   const selectedVideo = selectedIndex !== null ? videoItems[selectedIndex] ?? null : null;
   const selectedCount = selectedVideoUris.size;
   const shouldKeepAwakeForUpload = activity.status === 'receiving';
+
+  useEffect(() => {
+    thumbnailSourceByUriRef.current = thumbnailSourceByUri;
+  }, [thumbnailSourceByUri]);
 
   const refreshLibrary = useCallback(async () => {
     const [items, playbackState] = await Promise.all([listLibraryItems(), getAllPlaybackState()]);
@@ -282,6 +287,12 @@ export default function App() {
       const validUris = new Set(videos.map((video) => video.uri));
       const nextEntries = Object.entries(current).filter(([uri]) => validUris.has(uri));
 
+      thumbnailJobUrisRef.current.forEach((uri) => {
+        if (!validUris.has(uri)) {
+          thumbnailJobUrisRef.current.delete(uri);
+        }
+      });
+
       return nextEntries.length === Object.keys(current).length ? current : Object.fromEntries(nextEntries);
     });
   }, [videos]);
@@ -482,15 +493,15 @@ export default function App() {
   }, [activeTab, loading, refreshLibrary]);
 
   useEffect(() => {
-    if (loading || activeTab !== 'library') {
+    if (loading) {
       return;
     }
 
     void hydrateMissingDurations(videoItems, playbackStateByUri);
-  }, [activeTab, hydrateMissingDurations, loading, playbackStateByUri, videoItems]);
+  }, [hydrateMissingDurations, loading, playbackStateByUri, videoItems]);
 
   useEffect(() => {
-    if (loading || activeTab !== 'library' || videoItems.length === 0) {
+    if (loading || videoItems.length === 0) {
       return;
     }
 
@@ -499,60 +510,69 @@ export default function App() {
     async function hydrateMissingThumbnails() {
       await pruneThumbnailCache(videoItems);
 
-      for (const video of videoItems) {
-        if (cancelled || thumbnailSourceByUri[video.uri] !== undefined) {
-          continue;
+      const queuedVideos = videoItems.filter((video) => {
+        if (thumbnailSourceByUriRef.current[video.uri] !== undefined || thumbnailJobUrisRef.current.has(video.uri)) {
+          return false;
         }
 
-        const cachedThumbnailUri = await getCachedThumbnailUri(video);
+        thumbnailJobUrisRef.current.add(video.uri);
+        return true;
+      });
 
-        if (cachedThumbnailUri) {
-          if (!cancelled) {
-            setThumbnailSourceByUri((current) => ({
-              ...current,
-              [video.uri]: { uri: cachedThumbnailUri },
-            }));
-          }
-
-          continue;
-        }
-
-        const player = createVideoPlayer(video.uri);
-
-        try {
-          const knownDuration = playbackStateByUri[video.uri]?.durationSeconds;
-          const thumbnailTime = knownDuration && knownDuration > 0
-            ? Math.min(THUMBNAIL_TIME_SECONDS, Math.max(0, knownDuration - 1))
-            : THUMBNAIL_TIME_SECONDS;
-          const thumbnails = await player.generateThumbnailsAsync([thumbnailTime], {
-            maxHeight: THUMBNAIL_MAX_HEIGHT,
-            maxWidth: THUMBNAIL_MAX_WIDTH,
-          });
-          const thumbnail = thumbnails[0] ?? null;
-
-          if (!thumbnail) {
-            throw new Error('Thumbnail generation returned no image.');
-          }
-
-          const thumbnailUri = await persistThumbnail(video, thumbnail);
-
-          if (!cancelled) {
-            setThumbnailSourceByUri((current) => ({
-              ...current,
-              [video.uri]: { uri: thumbnailUri },
-            }));
-          }
-        } catch {
-          if (!cancelled) {
-            setThumbnailSourceByUri((current) => ({
-              ...current,
-              [video.uri]: null,
-            }));
-          }
-        } finally {
-          player.release();
-        }
+      if (queuedVideos.length === 0) {
+        return;
       }
+
+      let nextIndex = 0;
+
+      const runWorker = async () => {
+        while (!cancelled) {
+          const video = queuedVideos[nextIndex];
+
+          nextIndex += 1;
+
+          if (!video) {
+            return;
+          }
+
+          try {
+            const cachedThumbnailUri = await getCachedThumbnailUri(video);
+
+            if (cachedThumbnailUri) {
+              if (!cancelled) {
+                setThumbnailSourceByUri((current) => ({
+                  ...current,
+                  [video.uri]: { uri: cachedThumbnailUri },
+                }));
+              }
+
+              continue;
+            }
+
+            const thumbnailUri = await generateThumbnailForVideo(video, playbackStateByUri[video.uri]?.durationSeconds);
+
+            if (!cancelled) {
+              setThumbnailSourceByUri((current) => ({
+                ...current,
+                [video.uri]: { uri: thumbnailUri },
+              }));
+            }
+          } catch {
+            if (!cancelled) {
+              setThumbnailSourceByUri((current) => ({
+                ...current,
+                [video.uri]: null,
+              }));
+            }
+          } finally {
+            thumbnailJobUrisRef.current.delete(video.uri);
+          }
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(THUMBNAIL_HYDRATION_CONCURRENCY, queuedVideos.length) }, () => runWorker()),
+      );
     }
 
     void hydrateMissingThumbnails();
@@ -560,7 +580,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, loading, playbackStateByUri, thumbnailSourceByUri, videoItems]);
+  }, [loading, playbackStateByUri, videoItems]);
 
   useEffect(() => {
     if (!loading && activeTab === 'upload') {

@@ -39,6 +39,13 @@ const SCRUB_PREVIEW_POPUP_WIDTH = 160;
 const SCRUB_PREVIEW_POPUP_HEIGHT = 90;
 const RESUME_NEAR_END_THRESHOLD_SECONDS = 0.25;
 const RESUME_END_PADDING_SECONDS = 1;
+const PLAYBACK_RATE_STEP = 0.1;
+const MIN_PLAYBACK_RATE = 0.1;
+const MAX_PLAYBACK_RATE = 16;
+
+function clampPlaybackRate(rate: number): number {
+  return Math.min(MAX_PLAYBACK_RATE, Math.max(MIN_PLAYBACK_RATE, Math.round(rate * 10) / 10));
+}
 
 function getResumePosition(savedPosition: number, duration: number): number {
   if (!Number.isFinite(savedPosition) || savedPosition <= 0) {
@@ -67,6 +74,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const [isControlsLocked, setIsControlsLocked] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubPreviewSource, setScrubPreviewSource] = useState<ImageProps['source'] | null>(null);
   const [scrubTime, setScrubTime] = useState(0);
@@ -124,6 +132,8 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
   useEffect(() => {
     player.keepScreenOnWhilePlaying = true;
+    player.playbackRate = 1;
+    player.preservesPitch = true;
     player.timeUpdateEventInterval = 0.5;
   }, [player]);
 
@@ -386,6 +396,21 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   function handleUnlockControls() {
     setIsControlsLocked(false);
     setControlsVisible(true);
+  }
+
+  function updatePlaybackRate(nextRate: number) {
+    const normalizedRate = clampPlaybackRate(nextRate);
+    player.playbackRate = normalizedRate;
+    setPlaybackRate(normalizedRate);
+    setControlsVisible(true);
+  }
+
+  function handleIncreasePlaybackRate() {
+    updatePlaybackRate(playbackRate + PLAYBACK_RATE_STEP);
+  }
+
+  function handleDecreasePlaybackRate() {
+    updatePlaybackRate(playbackRate - PLAYBACK_RATE_STEP);
   }
 
   function handleTogglePlaybackWithoutControls() {
@@ -723,6 +748,20 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
           </View>
 
           {!isControlsLocked ? (
+            <View pointerEvents="box-none" style={[styles.speedControlOverlay, { right: insets.right + 12 }]}> 
+              <View style={styles.speedControlStack}>
+                <Pressable onPress={handleIncreasePlaybackRate} style={({ pressed }) => [styles.speedButton, pressed && styles.closeButtonPressed]}>
+                  <Text style={styles.speedButtonText}>+</Text>
+                </Pressable>
+                <Text style={styles.speedValueText}>{playbackRate.toFixed(1)}</Text>
+                <Pressable onPress={handleDecreasePlaybackRate} style={({ pressed }) => [styles.speedButton, pressed && styles.closeButtonPressed]}>
+                  <Text style={styles.speedButtonText}>-</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          {!isControlsLocked ? (
             <View style={[styles.bottomOverlay, { paddingBottom: insets.bottom + 12 }]}> 
               <View
                 style={[
@@ -898,6 +937,41 @@ const styles = StyleSheet.create({
   centerControlStack: {
     alignItems: 'center',
     gap: 16,
+  },
+  speedControlOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  speedControlStack: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  speedButton: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: 'rgba(8,12,16,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  speedButtonText: {
+    color: '#fff',
+    fontSize: 28,
+    lineHeight: 32,
+    fontWeight: '700',
+  },
+  speedValueText: {
+    minWidth: 52,
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   transportRowSlot: {
     minHeight: 48,
