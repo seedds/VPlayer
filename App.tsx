@@ -23,7 +23,14 @@ import { PlayerScreen } from './src/components/PlayerScreen';
 import { VideoCard } from './src/components/VideoCard';
 import { isAndroidTabletLayout } from './src/lib/device';
 import { formatBytes, formatDate, getUploadProgress, normalizePort } from './src/lib/format';
-import { clearAllPlaybackProgress, clearPlaybackPosition, getAllPlaybackState, savePlaybackDuration, type PlaybackStateMap } from './src/lib/playbackState';
+import {
+  clearAllPlaybackProgress,
+  clearPlaybackPosition,
+  clearPlaybackProgressForUris,
+  getAllPlaybackState,
+  savePlaybackDuration,
+  type PlaybackStateMap,
+} from './src/lib/playbackState';
 import {
   deleteThumbnailForVideo,
   getCachedThumbnailUri,
@@ -434,6 +441,39 @@ export default function App() {
     ]);
   }, [handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
 
+  const handleClearSelectedPlayback = useCallback(() => {
+    if (selectedCount === 0) {
+      return;
+    }
+
+    const selectedVideos = videos.filter((video): video is VideoItem => video.kind === 'video' && selectedVideoUris.has(video.uri));
+
+    Alert.alert(
+      'Clear playback history?',
+      `Saved playback positions will be reset for ${selectedCount} selected file${selectedCount === 1 ? '' : 's'}.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                await clearPlaybackProgressForUris(selectedVideos.map((video) => video.uri));
+                await refreshLibrary();
+              } catch (error) {
+                Alert.alert('Clear failed', error instanceof Error ? error.message : 'Could not clear playback history for the selected files.');
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [refreshLibrary, selectedCount, selectedVideoUris, videos]);
+
   useEffect(() => {
     if (!loading && activeTab === 'library') {
       void refreshLibrary();
@@ -651,6 +691,7 @@ export default function App() {
                 selectionMode={selectionMode}
                 thumbnailSourceByUri={thumbnailSourceByUri}
                 onCancelSelection={handleCancelSelection}
+                onClearSelectedPlayback={handleClearSelectedPlayback}
                 onDeleteSelected={handleDeleteSelected}
                 videos={videos}
                 onDeleteVideo={handleDeleteVideo}
@@ -714,6 +755,7 @@ function UploadWakeLock() {
 type LibraryViewProps = {
   onCancelSelection: () => void;
   onClearPlayback: () => void;
+  onClearSelectedPlayback: () => void;
   onDeleteSelected: () => void;
   playbackStateByUri: PlaybackStateMap;
   selectedCount: number;
@@ -730,6 +772,7 @@ type LibraryViewProps = {
 function LibraryView({
   onCancelSelection,
   onClearPlayback,
+  onClearSelectedPlayback,
   onDeleteSelected,
   playbackStateByUri,
   selectedCount,
@@ -763,6 +806,9 @@ function LibraryView({
           <View style={styles.selectionActions}>
             <Pressable onPress={onCancelSelection} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonSecondary, pressed && styles.selectionButtonPressed]}>
               <Text style={styles.selectionButtonSecondaryText}>Cancel</Text>
+            </Pressable>
+            <Pressable onPress={onClearSelectedPlayback} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonSecondary, pressed && styles.selectionButtonPressed]}>
+              <Text style={styles.selectionButtonSecondaryText}>Clear History</Text>
             </Pressable>
             <Pressable onPress={onDeleteSelected} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonDanger, pressed && styles.selectionButtonPressed]}>
               <Text style={styles.selectionButtonDangerText}>Delete</Text>
@@ -1011,7 +1057,9 @@ const styles = StyleSheet.create({
   },
   selectionActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
+    justifyContent: 'flex-end',
   },
   selectionButton: {
     borderRadius: 14,

@@ -149,3 +149,34 @@ export async function clearAllPlaybackProgress(): Promise<void> {
     ),
   );
 }
+
+export async function clearPlaybackProgressForUris(uris: Iterable<string>): Promise<void> {
+  const targetUris = new Set(uris);
+
+  if (targetUris.size === 0) {
+    return;
+  }
+
+  await updatePlaybackState((state) => {
+    let didUpdate = false;
+    const nextState = { ...state };
+
+    for (const uri of targetUris) {
+      const entry = state[uri];
+
+      if (!entry) {
+        continue;
+      }
+
+      nextState[uri] = {
+        durationSeconds: entry.durationSeconds,
+        hasStartedPlayback: false,
+        positionSeconds: 0,
+        updatedAt: Date.now(),
+      } satisfies PlaybackStateEntry;
+      didUpdate = true;
+    }
+
+    return didUpdate ? nextState : null;
+  });
+}
