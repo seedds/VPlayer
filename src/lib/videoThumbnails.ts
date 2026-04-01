@@ -6,7 +6,7 @@ import type { VideoThumbnail } from 'expo-video';
 
 import type { VideoItem } from './types';
 
-export const THUMBNAIL_TIME_SECONDS = 60;
+export const THUMBNAIL_TIME_SECONDS = 10;
 export const THUMBNAIL_MAX_WIDTH = 240;
 export const THUMBNAIL_MAX_HEIGHT = 240;
 
