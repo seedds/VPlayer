@@ -162,7 +162,7 @@ export default function App() {
       if (!address || address === '0.0.0.0') {
         return;
       }
-    } catch {}
+    } catch { }
   }, []);
 
   const probeExistingServer = useCallback(async (port: number): Promise<{ ok: boolean; reportedPort: number | null }> => {
@@ -463,6 +463,7 @@ export default function App() {
             void (async () => {
               try {
                 await clearPlaybackProgressForUris(selectedVideos.map((video) => video.uri));
+                handleCancelSelection();
                 await refreshLibrary();
               } catch (error) {
                 Alert.alert('Clear failed', error instanceof Error ? error.message : 'Could not clear playback history for the selected files.');
@@ -472,7 +473,7 @@ export default function App() {
         },
       ],
     );
-  }, [refreshLibrary, selectedCount, selectedVideoUris, videos]);
+  }, [handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
 
   useEffect(() => {
     if (!loading && activeTab === 'library') {
@@ -790,7 +791,7 @@ function LibraryView({
           </View>
         ) : (
           <Pressable onPress={onClearPlayback} style={({ pressed }) => [styles.clearPlaybackButton, pressed && styles.clearPlaybackButtonPressed]}>
-            <Text style={styles.clearPlaybackButtonText}>Clear playback</Text>
+            <Text style={styles.clearPlaybackButtonText}>Clear All History</Text>
           </Pressable>
         )}
       </View>
