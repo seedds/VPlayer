@@ -130,6 +130,28 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     void savePlaybackPosition(uri, positionSeconds, currentDurationRef.current);
   };
 
+  function clearAutoHideTimer() {
+    if (autoHideTimeoutRef.current) {
+      clearTimeout(autoHideTimeoutRef.current);
+      autoHideTimeoutRef.current = null;
+    }
+  }
+
+  function restartAutoHideTimer(shouldAutoHide: boolean) {
+    clearAutoHideTimer();
+
+    if (shouldAutoHide) {
+      autoHideTimeoutRef.current = setTimeout(() => {
+        setControlsVisible(false);
+      }, 2500);
+    }
+  }
+
+  function showControls() {
+    setControlsVisible(true);
+    restartAutoHideTimer(player.playing && !isScrubbing);
+  }
+
   useEffect(() => {
     player.keepScreenOnWhilePlaying = true;
     player.playbackRate = 1;
@@ -138,21 +160,10 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   }, [player]);
 
   useEffect(() => {
-    if (autoHideTimeoutRef.current) {
-      clearTimeout(autoHideTimeoutRef.current);
-    }
-
-    if (controlsVisible && isPlaying && !isScrubbing) {
-      autoHideTimeoutRef.current = setTimeout(() => {
-        setControlsVisible(false);
-      }, 2500);
-    }
+    restartAutoHideTimer(controlsVisible && isPlaying && !isScrubbing);
 
     return () => {
-      if (autoHideTimeoutRef.current) {
-        clearTimeout(autoHideTimeoutRef.current);
-        autoHideTimeoutRef.current = null;
-      }
+      clearAutoHideTimer();
     };
   }, [controlsVisible, isControlsLocked, isPlaying, isScrubbing]);
 
@@ -373,36 +384,36 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     player.seekBy(seconds);
     setCurrentTime(player.currentTime);
     setScrubTime(player.currentTime);
-    setControlsVisible(true);
+    showControls();
   }
 
   function handleTogglePlayback() {
     if (player.playing) {
       player.pause();
-      setControlsVisible(true);
+      showControls();
       return;
     }
 
     playbackInterruptedRef.current = false;
     player.play();
-    setControlsVisible(true);
+    showControls();
   }
 
   function handleLockControls() {
     setIsControlsLocked(true);
-    setControlsVisible(true);
+    showControls();
   }
 
   function handleUnlockControls() {
     setIsControlsLocked(false);
-    setControlsVisible(true);
+    showControls();
   }
 
   function updatePlaybackRate(nextRate: number) {
     const normalizedRate = clampPlaybackRate(nextRate);
     player.playbackRate = normalizedRate;
     setPlaybackRate(normalizedRate);
-    setControlsVisible(true);
+    showControls();
   }
 
   function handleIncreasePlaybackRate() {
