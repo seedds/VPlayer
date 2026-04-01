@@ -51,7 +51,7 @@ const INITIAL_ACTIVITY: UploadActivity = {
   updatedAt: Date.now(),
 };
 
-const THUMBNAIL_HYDRATION_CONCURRENCY = 2;
+const THUMBNAIL_HYDRATION_CONCURRENCY = 4;
 
 export default function App() {
   const { width, height } = useWindowDimensions();
@@ -68,6 +68,7 @@ export default function App() {
   const [activePort, setActivePort] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [portInput, setPortInput] = useState(String(DEFAULT_SERVER_PORT));
+  const playbackStateByUriRef = useRef<PlaybackStateMap>({});
   const thumbnailSourceByUriRef = useRef<Record<string, ThumbnailSource | null | undefined>>({});
   const thumbnailJobUrisRef = useRef<Set<string>>(new Set());
 
@@ -78,6 +79,10 @@ export default function App() {
   const selectedVideo = selectedIndex !== null ? videoItems[selectedIndex] ?? null : null;
   const selectedCount = selectedVideoUris.size;
   const shouldKeepAwakeForUpload = activity.status === 'receiving';
+
+  useEffect(() => {
+    playbackStateByUriRef.current = playbackStateByUri;
+  }, [playbackStateByUri]);
 
   useEffect(() => {
     thumbnailSourceByUriRef.current = thumbnailSourceByUri;
@@ -549,7 +554,10 @@ export default function App() {
               continue;
             }
 
-            const thumbnailUri = await generateThumbnailForVideo(video, playbackStateByUri[video.uri]?.durationSeconds);
+            const thumbnailUri = await generateThumbnailForVideo(
+              video,
+              playbackStateByUriRef.current[video.uri]?.durationSeconds,
+            );
 
             if (!cancelled) {
               setThumbnailSourceByUri((current) => ({
@@ -580,7 +588,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [loading, playbackStateByUri, videoItems]);
+  }, [loading, videoItems]);
 
   useEffect(() => {
     if (!loading && activeTab === 'upload') {
