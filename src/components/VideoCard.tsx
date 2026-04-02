@@ -101,7 +101,6 @@ export function VideoCard({
           <View style={styles.badgeSlot}>
             {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
           </View>
-          <View style={styles.navSlot}>{isFolder ? <Text style={styles.folderChevron}>{'>'}</Text> : null}</View>
           <View style={styles.actionSlot}>
             <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
               <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
@@ -113,7 +112,6 @@ export function VideoCard({
           <View style={styles.badgeSlot}>
             {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
           </View>
-          <View style={styles.navSlot}>{isFolder ? <Text style={styles.folderChevron}>{'>'}</Text> : null}</View>
           <View style={styles.actionSlot}>
             <Pressable
               onPress={(event) => {
@@ -258,15 +256,10 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   badgeSlot: {
     width: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  navSlot: {
-    width: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -282,12 +275,6 @@ const styles = StyleSheet.create({
     color: '#9e3e28',
     fontSize: 13,
     fontWeight: '700',
-  },
-  folderChevron: {
-    color: '#9a8c80',
-    fontSize: 18,
-    fontWeight: '700',
-    lineHeight: 18,
   },
   newLabel: {
     color: '#1f6f68',
