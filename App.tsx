@@ -899,26 +899,33 @@ function LibraryView({
 
   return (
     <View style={styles.libraryWrap}>
-      <ScrollView contentContainerStyle={styles.libraryBreadcrumbs} horizontal showsHorizontalScrollIndicator={false}>
-        <Pressable onPress={() => onOpenFolder('')} style={({ pressed }) => [styles.libraryPathButton, pressed && styles.libraryPathButtonPressed]}>
-          <Text style={styles.libraryPathButtonText}>Library</Text>
-        </Pressable>
-        {pathSegments.map((segment, index) => {
-          const path = pathSegments.slice(0, index + 1).join('/');
+      {pathSegments.length > 0 ? (
+        <ScrollView contentContainerStyle={styles.libraryBreadcrumbs} horizontal showsHorizontalScrollIndicator={false}>
+          {pathSegments.map((segment, index) => {
+            const path = pathSegments.slice(0, index + 1).join('/');
 
-          return (
-            <View key={path} style={styles.libraryPathSegment}>
-              <Text style={styles.libraryPathDivider}>/</Text>
-              <Pressable onPress={() => onOpenFolder(path)} style={({ pressed }) => [styles.libraryPathButton, pressed && styles.libraryPathButtonPressed]}>
-                <Text style={styles.libraryPathButtonText}>{segment}</Text>
-              </Pressable>
-            </View>
-          );
-        })}
-      </ScrollView>
+            return (
+              <View key={path} style={styles.libraryPathSegment}>
+                {index > 0 ? <Text style={styles.libraryPathDivider}>/</Text> : null}
+                <Pressable onPress={() => onOpenFolder(path)} style={({ pressed }) => [styles.libraryPathButton, pressed && styles.libraryPathButtonPressed]}>
+                  <Text style={styles.libraryPathButtonText}>{segment}</Text>
+                </Pressable>
+              </View>
+            );
+          })}
+        </ScrollView>
+      ) : null}
 
       <View style={styles.libraryToolbar}>
-        {selectionMode ? <Text style={styles.selectionCount}>{selectedCount} selected</Text> : <View />}
+        {selectionMode ? (
+          <Text style={styles.selectionCount}>{selectedCount} selected</Text>
+        ) : currentFolderPath ? (
+          <Pressable onPress={onNavigateUp} style={({ pressed }) => [styles.libraryBackButton, pressed && styles.libraryBackButtonPressed]}>
+            <Text style={styles.libraryBackButtonText}>{'\u2190'}</Text>
+          </Pressable>
+        ) : (
+          <View />
+        )}
         {selectionMode ? (
           <View style={styles.selectionActions}>
             <Pressable onPress={onCancelSelection} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonSecondary, pressed && styles.selectionButtonPressed]}>
@@ -933,13 +940,6 @@ function LibraryView({
           </View>
         ) : (
           <View style={styles.libraryToolbarActions}>
-            <Pressable
-              disabled={!currentFolderPath}
-              onPress={onNavigateUp}
-              style={({ pressed }) => [styles.clearPlaybackButton, !currentFolderPath && styles.clearPlaybackButtonDisabled, pressed && styles.clearPlaybackButtonPressed]}
-            >
-              <Text style={styles.clearPlaybackButtonText}>Up</Text>
-            </Pressable>
             <Pressable onPress={onClearPlayback} style={({ pressed }) => [styles.clearPlaybackButton, pressed && styles.clearPlaybackButtonPressed]}>
               <Text style={styles.clearPlaybackButtonText}>Clear All History</Text>
             </Pressable>
@@ -1193,12 +1193,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingBottom: 8,
+    gap: 10,
   },
   libraryToolbarActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
     justifyContent: 'flex-end',
+  },
+  libraryBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: '#e3d7ca',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  libraryBackButtonPressed: {
+    opacity: 0.78,
+  },
+  libraryBackButtonText: {
+    color: '#4f463f',
+    fontSize: 22,
+    fontWeight: '700',
+    lineHeight: 24,
   },
   libraryList: {
     gap: 0,
@@ -1212,9 +1230,6 @@ const styles = StyleSheet.create({
   },
   clearPlaybackButtonPressed: {
     opacity: 0.78,
-  },
-  clearPlaybackButtonDisabled: {
-    opacity: 0.52,
   },
   clearPlaybackButtonText: {
     color: '#4f463f',
