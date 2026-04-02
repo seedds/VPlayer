@@ -79,20 +79,21 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       }
 
       .library-toolbar {
+        margin-top: 10px;
+        gap: 6px;
         justify-content: space-between;
       }
 
       .library-toolbar-actions {
         display: flex;
-        gap: 12px;
+        gap: 6px;
         flex-wrap: wrap;
         margin-left: auto;
       }
 
       .button,
       .ghost-button,
-      .danger-button,
-      .path-button {
+      .danger-button {
         border: 0;
         border-radius: 16px;
         padding: 12px 16px;
@@ -107,11 +108,17 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         box-shadow: 0 18px 32px rgba(155, 73, 39, 0.24);
       }
 
-      .ghost-button,
-      .path-button {
+      .ghost-button {
         background: rgba(255, 255, 255, 0.74);
         color: var(--ink);
         border: 1px solid var(--line);
+      }
+
+      .library-toolbar .button,
+      .library-toolbar .ghost-button {
+        padding: 6px 10px;
+        font-size: 12px;
+        border-radius: 10px;
       }
 
       .back-button {
@@ -119,6 +126,13 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         padding: 12px;
         font-size: 20px;
         line-height: 1;
+      }
+
+      .library-toolbar .back-button {
+        min-width: 34px;
+        padding: 6px;
+        font-size: 16px;
+        border-radius: 10px;
       }
 
       .danger-button {
@@ -179,12 +193,22 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         align-items: center;
       }
 
+      .library-main {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: 1;
+        min-width: 0;
+      }
+
       .folder-item {
         cursor: pointer;
+        background: rgba(198, 103, 61, 0.1);
+        border-color: rgba(198, 103, 61, 0.18);
       }
 
       .folder-item:hover {
-        background: rgba(255, 255, 255, 0.9);
+        background: rgba(198, 103, 61, 0.16);
       }
 
       .upload-name,
@@ -204,8 +228,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       .upload-state,
       .library-kind,
-      .empty,
-      .breadcrumbs {
+      .empty {
         color: var(--muted);
         font-size: 13px;
       }
@@ -218,8 +241,10 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       .library-actions {
         display: flex;
+        margin-left: auto;
         gap: 4px;
         flex-wrap: nowrap;
+        flex: 0 0 auto;
         justify-content: flex-end;
       }
 
@@ -230,8 +255,9 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       }
 
       .library-feedback {
-        margin-top: 12px;
-        min-height: 18px;
+        margin-top: 6px;
+        min-height: 14px;
+        font-size: 12px;
       }
 
       .library-feedback[data-tone="error"] {
@@ -302,13 +328,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         color: var(--muted);
       }
 
-      .breadcrumbs {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        align-items: center;
-      }
-
       code {
         background: rgba(31, 26, 23, 0.08);
         padding: 2px 6px;
@@ -341,7 +360,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
     <main>
       <section class="panel">
         <h2>Library folders</h2>
-        <p>Create folders, remove folders, and remove files from your computer. Uploaded files are saved into the folder you are currently viewing.</p>
         <div class="library-toolbar">
           <button aria-label="Go back" class="ghost-button back-button" hidden id="up-button" type="button">&#8592;</button>
           <div class="library-toolbar-actions">
@@ -349,7 +367,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
             <button class="button" id="new-folder-button" type="button">New folder</button>
           </div>
         </div>
-        <div class="breadcrumbs" id="breadcrumbs" style="margin-top: 16px;"></div>
         <div class="library-feedback empty" id="library-feedback"></div>
         <div class="library-list" id="library-list">
           <div class="empty">Loading library...</div>
@@ -394,7 +411,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       const batchSpeed = document.getElementById('batch-speed');
       const libraryList = document.getElementById('library-list');
       const libraryFeedback = document.getElementById('library-feedback');
-      const breadcrumbs = document.getElementById('breadcrumbs');
       const upButton = document.getElementById('up-button');
       const refreshButton = document.getElementById('refresh-button');
       const newFolderButton = document.getElementById('new-folder-button');
@@ -463,14 +479,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         }
 
         return formatBytes(bytesPerSecond) + '/s';
-      }
-
-      function formatDate(timestamp) {
-        if (!timestamp) {
-          return '';
-        }
-
-        return new Date(timestamp).toLocaleString();
       }
 
       function updateBatchStatus(speedBytesPerSecond) {
@@ -599,39 +607,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         });
       }
 
-      function renderBreadcrumbs() {
-        breadcrumbs.innerHTML = '';
-        let accumulatedPath = '';
-        const segments = splitPath(currentPath);
-
-        segments.forEach((segment, index) => {
-          if (index > 0) {
-            const separator = document.createElement('span');
-            separator.textContent = '/';
-            breadcrumbs.append(separator);
-          }
-
-          accumulatedPath = joinPath(accumulatedPath, segment);
-          const breadcrumbPath = accumulatedPath;
-          const button = document.createElement('button');
-          button.className = 'path-button';
-          button.type = 'button';
-          button.textContent = segment;
-          button.addEventListener('click', () => {
-            loadLibrary(breadcrumbPath).catch((error) => {
-              const message = error && error.message ? error.message : 'Unable to load library.';
-              setPickerState(message);
-              setLibraryFeedback(message, 'error');
-              renderLibraryMessage(message, 'error');
-            });
-          });
-          breadcrumbs.append(button);
-        });
-
-        upButton.hidden = !currentPath;
-        breadcrumbs.hidden = segments.length === 0;
-      }
-
       function describeLibraryItem(item) {
         if (item.kind === 'folder') {
           return 'Folder';
@@ -679,6 +654,9 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
             });
           }
 
+          const main = document.createElement('div');
+          main.className = 'library-main';
+
           const actions = document.createElement('div');
           actions.className = 'library-actions';
 
@@ -717,7 +695,8 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           kind.className = 'library-kind';
           kind.textContent = describeLibraryItem(item);
 
-          top.append(kind);
+          main.append(title, kind);
+          top.append(main, actions);
           row.append(top);
           libraryList.append(row);
         }
@@ -732,8 +711,8 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       function applyLibraryListing(response) {
         currentPath = response.path || '';
+        upButton.hidden = !currentPath;
         setLibraryFeedback(currentPath ? 'Current folder: ' + currentPath : 'Current folder: root', null);
-        renderBreadcrumbs();
         renderLibrary(response.items || []);
       }
 
