@@ -161,11 +161,41 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         color: var(--ink);
       }
 
-      .queue,
-      .library-list {
+      .queue {
         display: grid;
         gap: 3px;
         margin-top: 16px;
+      }
+
+      .library-list {
+        margin-top: 10px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.4);
+      }
+
+      .library-table-head,
+      .library-row {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) 110px 150px;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .library-table-head {
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(227, 215, 202, 0.58);
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .library-row {
+        padding: 10px;
       }
 
       .upload-item,
@@ -181,34 +211,49 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         border-radius: 18px;
       }
 
+      .library-item {
+        padding: 0;
+        border-radius: 0;
+        border: 0;
+        border-top: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.46);
+      }
+
       .upload-row,
-      .status-line,
-      .library-row {
+      .status-line {
         display: flex;
         justify-content: space-between;
         gap: 8px;
       }
 
-      .library-row {
-        align-items: center;
-      }
-
-      .library-main {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        flex: 1;
-        min-width: 0;
+      .library-table-head + .library-item {
+        border-top: 0;
       }
 
       .folder-item {
         cursor: pointer;
-        background: rgba(198, 103, 61, 0.1);
-        border-color: rgba(198, 103, 61, 0.18);
+        background: rgba(198, 103, 61, 0.08);
       }
 
       .folder-item:hover {
-        background: rgba(198, 103, 61, 0.16);
+        background: rgba(198, 103, 61, 0.14);
+      }
+
+      .library-item.selected-item {
+        background: rgba(31, 111, 104, 0.1);
+      }
+
+      .library-select {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .library-checkbox {
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        accent-color: var(--accent);
       }
 
       .upload-name,
@@ -219,7 +264,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       }
 
       .library-name {
-        flex: 1;
         min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -227,37 +271,34 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       }
 
       .upload-state,
-      .library-kind,
       .empty {
         color: var(--muted);
         font-size: 13px;
       }
 
+      .library-date,
       .library-kind {
-        flex: 0 0 auto;
         font-size: 11px;
         white-space: nowrap;
-      }
-
-      .library-actions {
-        display: flex;
-        margin-left: auto;
-        gap: 4px;
-        flex-wrap: nowrap;
-        flex: 0 0 auto;
-        justify-content: flex-end;
-      }
-
-      .library-actions .danger-button {
-        padding: 4px 7px;
-        font-size: 10px;
-        border-radius: 9px;
+        color: var(--muted);
       }
 
       .library-feedback {
         margin-top: 6px;
         min-height: 14px;
         font-size: 12px;
+      }
+
+      .library-footer {
+        margin-top: 10px;
+        display: flex;
+        justify-content: flex-start;
+      }
+
+      .library-footer .danger-button {
+        padding: 7px 12px;
+        font-size: 12px;
+        border-radius: 10px;
       }
 
       .library-feedback[data-tone="error"] {
@@ -349,6 +390,16 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           align-items: flex-start;
         }
 
+        .library-table-head,
+        .library-row {
+          grid-template-columns: 28px minmax(0, 1fr) 82px;
+        }
+
+        .library-date,
+        .library-head-date {
+          display: none;
+        }
+
         .library-toolbar-actions {
           width: 100%;
           margin-left: 0;
@@ -370,6 +421,9 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         <div class="library-feedback empty" id="library-feedback"></div>
         <div class="library-list" id="library-list">
           <div class="empty">Loading library...</div>
+        </div>
+        <div class="library-footer">
+          <button class="danger-button" disabled id="delete-selected-button" type="button">Delete</button>
         </div>
       </section>
 
@@ -411,11 +465,15 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       const batchSpeed = document.getElementById('batch-speed');
       const libraryList = document.getElementById('library-list');
       const libraryFeedback = document.getElementById('library-feedback');
+      const deleteSelectedButton = document.getElementById('delete-selected-button');
       const upButton = document.getElementById('up-button');
       const refreshButton = document.getElementById('refresh-button');
       const newFolderButton = document.getElementById('new-folder-button');
       const defaultChunkSize = ${chunkSize};
       let currentPath = '';
+      let currentLibraryItems = [];
+      let selectedLibraryPaths = new Set();
+      let deletingSelection = false;
       let dragDepth = 0;
       let totalFilesInBatch = 0;
       let completedFilesInBatch = 0;
@@ -479,6 +537,41 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         }
 
         return formatBytes(bytesPerSecond) + '/s';
+      }
+
+      function formatDate(timestamp) {
+        if (!timestamp) {
+          return '';
+        }
+
+        return new Date(timestamp).toDateString();
+      }
+
+      function updateDeleteSelectedButton() {
+        const count = selectedLibraryPaths.size;
+        deleteSelectedButton.disabled = deletingSelection || count === 0;
+        deleteSelectedButton.textContent = count > 0 ? 'Delete (' + count + ')' : 'Delete';
+      }
+
+      function syncSelectedLibraryPaths(pathChanged) {
+        if (pathChanged) {
+          selectedLibraryPaths = new Set();
+        } else {
+          const availablePaths = new Set(currentLibraryItems.map((item) => item.relativePath));
+          selectedLibraryPaths = new Set(Array.from(selectedLibraryPaths).filter((path) => availablePaths.has(path)));
+        }
+
+        updateDeleteSelectedButton();
+      }
+
+      function setLibraryItemSelected(relativePath, checked) {
+        if (checked) {
+          selectedLibraryPaths.add(relativePath);
+        } else {
+          selectedLibraryPaths.delete(relativePath);
+        }
+
+        updateDeleteSelectedButton();
       }
 
       function updateBatchStatus(speedBytesPerSecond) {
@@ -612,15 +705,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           return 'Folder';
         }
 
-        if (item.kind === 'video') {
-          return 'Video · ' + formatBytes(item.size);
-        }
-
-        if (item.kind === 'subtitle') {
-          return 'Subtitle · ' + formatBytes(item.size);
-        }
-
-        return 'File · ' + formatBytes(item.size);
+        return formatBytes(item.size);
       }
 
       function renderLibrary(items) {
@@ -628,8 +713,19 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
         if (!items.length) {
           renderLibraryMessage('This folder is empty.');
+          updateDeleteSelectedButton();
           return;
         }
+
+        const head = document.createElement('div');
+        head.className = 'library-table-head';
+        head.innerHTML = [
+          '<span></span>',
+          '<span>Name</span>',
+          '<span>Type/Size</span>',
+          '<span class="library-head-date">Modified</span>',
+        ].join('');
+        libraryList.append(head);
 
         for (const item of items) {
           const row = document.createElement('div');
@@ -638,9 +734,33 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           const top = document.createElement('div');
           top.className = 'library-row';
 
+          const selectWrap = document.createElement('div');
+          selectWrap.className = 'library-select';
+
+          const checkbox = document.createElement('input');
+          checkbox.className = 'library-checkbox';
+          checkbox.type = 'checkbox';
+          checkbox.checked = selectedLibraryPaths.has(item.relativePath);
+          checkbox.addEventListener('click', (event) => {
+            event.stopPropagation();
+          });
+          checkbox.addEventListener('change', () => {
+            setLibraryItemSelected(item.relativePath, checkbox.checked);
+            row.classList.toggle('selected-item', checkbox.checked);
+          });
+          selectWrap.append(checkbox);
+
           const title = document.createElement('div');
           title.className = 'library-name';
           title.textContent = item.name;
+
+          const kind = document.createElement('span');
+          kind.className = 'library-kind';
+          kind.textContent = describeLibraryItem(item);
+
+          const date = document.createElement('span');
+          date.className = 'library-date';
+          date.textContent = formatDate(item.modified);
 
           if (item.kind === 'folder') {
             row.classList.add('folder-item');
@@ -654,66 +774,34 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
             });
           }
 
-          const main = document.createElement('div');
-          main.className = 'library-main';
-
-          const actions = document.createElement('div');
-          actions.className = 'library-actions';
-
-          const deleteButton = document.createElement('button');
-          deleteButton.className = 'danger-button';
-          deleteButton.type = 'button';
-          deleteButton.textContent = 'Delete';
-          deleteButton.addEventListener('click', async (event) => {
-            event.stopPropagation();
-            const label = item.kind === 'folder' ? 'folder' : 'file';
-            const confirmed = window.confirm('Delete this ' + label + '?\\n\\n' + item.relativePath);
-
-            if (!confirmed) {
-              return;
-            }
-
-            try {
-              const response = await postJson('/library/delete', {
-                relativePath: item.relativePath,
-                entryType: item.kind === 'folder' ? 'folder' : 'file',
-                currentPath,
-              });
-              setLibraryFeedback('Deleted ' + item.name + '.', null);
-              applyLibraryListing(response);
-            } catch (error) {
-              const message = error && error.message ? error.message : 'Delete failed.';
-              setPickerState(message);
-              setLibraryFeedback(message, 'error');
-            }
-          });
-          actions.append(deleteButton);
-
-          top.append(title, actions);
-
-          const kind = document.createElement('span');
-          kind.className = 'library-kind';
-          kind.textContent = describeLibraryItem(item);
-
-          main.append(title, kind);
-          top.append(main, actions);
+          row.classList.toggle('selected-item', checkbox.checked);
+          top.append(selectWrap, title, kind, date);
           row.append(top);
           libraryList.append(row);
         }
+
+        updateDeleteSelectedButton();
       }
 
       async function loadLibrary(path) {
         renderLibraryMessage('Loading library...');
+        currentLibraryItems = [];
+        selectedLibraryPaths = new Set();
+        updateDeleteSelectedButton();
         const query = path ? '?path=' + encodeURIComponent(path) : '';
         const response = await getJson('/library/list' + query);
         applyLibraryListing(response);
       }
 
       function applyLibraryListing(response) {
-        currentPath = response.path || '';
+        const nextPath = response.path || '';
+        const pathChanged = nextPath !== currentPath;
+        currentLibraryItems = response.items || [];
+        currentPath = nextPath;
+        syncSelectedLibraryPaths(pathChanged);
         upButton.hidden = !currentPath;
         setLibraryFeedback(currentPath ? 'Current folder: ' + currentPath : 'Current folder: root', null);
-        renderLibrary(response.items || []);
+        renderLibrary(currentLibraryItems);
       }
 
       async function uploadFile(fileSpec, card) {
@@ -923,6 +1011,57 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           }, () => {
             newFolderButton.disabled = false;
           });
+      });
+      deleteSelectedButton.addEventListener('click', async () => {
+        const selectedItems = currentLibraryItems.filter((item) => selectedLibraryPaths.has(item.relativePath));
+
+        if (!selectedItems.length) {
+          return;
+        }
+
+        const confirmed = window.confirm(
+          'Delete ' + selectedItems.length + ' selected item' + (selectedItems.length === 1 ? '' : 's') + '?',
+        );
+
+        if (!confirmed) {
+          return;
+        }
+
+        deletingSelection = true;
+        updateDeleteSelectedButton();
+        setLibraryFeedback('Deleting selected items...', null);
+
+        try {
+          let latestResponse = null;
+
+          for (const item of selectedItems) {
+            latestResponse = await postJson('/library/delete', {
+              relativePath: item.relativePath,
+              entryType: item.kind === 'folder' ? 'folder' : 'file',
+              currentPath,
+            });
+          }
+
+          selectedLibraryPaths = new Set();
+
+          if (latestResponse) {
+            applyLibraryListing(latestResponse);
+          } else {
+            await loadLibrary(currentPath);
+          }
+
+          setLibraryFeedback(
+            'Deleted ' + selectedItems.length + ' item' + (selectedItems.length === 1 ? '' : 's') + '.',
+            null,
+          );
+        } catch (error) {
+          const message = error && error.message ? error.message : 'Delete failed.';
+          setPickerState(message);
+          setLibraryFeedback(message, 'error');
+        } finally {
+          deletingSelection = false;
+          updateDeleteSelectedButton();
+        }
       });
       fileInput.addEventListener('change', () => {
         const fileSpecs = Array.from(fileInput.files || []).map((file) => toFileSpec(file, file.name));
