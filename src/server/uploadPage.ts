@@ -150,14 +150,14 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       .queue,
       .library-list {
         display: grid;
-        gap: 8px;
+        gap: 3px;
         margin-top: 16px;
       }
 
       .upload-item,
       .library-item {
-        padding: 10px 12px;
-        border-radius: 14px;
+        padding: 5px 8px;
+        border-radius: 10px;
         background: rgba(255, 255, 255, 0.74);
         border: 1px solid var(--line);
       }
@@ -169,11 +169,10 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       .upload-row,
       .status-line,
-      .library-row,
-      .library-meta {
+      .library-row {
         display: flex;
         justify-content: space-between;
-        gap: 12px;
+        gap: 8px;
       }
 
       .library-row {
@@ -191,30 +190,43 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       .upload-name,
       .library-name {
         font-weight: 700;
-        font-size: 14px;
+        font-size: 13px;
         color: var(--ink);
+      }
+
+      .library-name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .upload-state,
       .library-kind,
-      .library-date,
       .empty,
       .breadcrumbs {
         color: var(--muted);
         font-size: 13px;
       }
 
+      .library-kind {
+        flex: 0 0 auto;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
       .library-actions {
         display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
+        gap: 4px;
+        flex-wrap: nowrap;
         justify-content: flex-end;
       }
 
       .library-actions .danger-button {
-        padding: 8px 12px;
-        font-size: 12px;
-        border-radius: 12px;
+        padding: 4px 7px;
+        font-size: 10px;
+        border-radius: 9px;
       }
 
       .library-feedback {
@@ -249,14 +261,9 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         transition: width 180ms ease;
       }
 
-      .status-line,
-      .library-meta {
+      .status-line {
         margin-top: 4px;
         align-items: center;
-      }
-
-      .library-meta {
-        font-size: 12px;
       }
 
       .drop-overlay {
@@ -318,15 +325,9 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         }
 
         .upload-row,
-        .status-line,
-        .library-row,
-        .library-meta {
+        .status-line {
           flex-direction: column;
           align-items: flex-start;
-        }
-
-        .library-actions {
-          justify-content: flex-start;
         }
 
         .library-toolbar-actions {
@@ -712,17 +713,12 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
           top.append(title, actions);
 
-          const meta = document.createElement('div');
-          meta.className = 'library-meta';
           const kind = document.createElement('span');
           kind.className = 'library-kind';
           kind.textContent = describeLibraryItem(item);
-          const date = document.createElement('span');
-          date.className = 'library-date';
-          date.textContent = formatDate(item.modified);
-          meta.append(kind, date);
 
-          row.append(top, meta);
+          top.append(kind);
+          row.append(top);
           libraryList.append(row);
         }
       }
