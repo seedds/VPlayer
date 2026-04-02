@@ -876,18 +876,11 @@ function LibraryView({
                 return;
               }
 
-              if (video.kind === 'video') {
-                onPlayVideo(video.uri);
+              if (video.kind !== 'video') {
                 return;
               }
 
-              const matchingVideo = videos.find(
-                (item): item is VideoItem => item.kind === 'video' && getBaseName(item.name) === getBaseName(video.name),
-              );
-
-              if (matchingVideo) {
-                onPlayVideo(matchingVideo.uri);
-              }
+              onPlayVideo(video.uri);
             }}
           />
         ))}

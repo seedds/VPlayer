@@ -4,7 +4,6 @@ import type { LibraryItem, VideoItem } from './types';
 
 export const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm', '.mkv'];
 export const ALLOWED_SUBTITLE_EXTENSIONS = ['.srt'];
-export const ALLOWED_UPLOAD_EXTENSIONS = [...ALLOWED_VIDEO_EXTENSIONS, ...ALLOWED_SUBTITLE_EXTENSIONS];
 
 function getDocumentRoot(): string {
   if (!FileSystem.documentDirectory) {
@@ -39,10 +38,6 @@ export function isAllowedSubtitleFileName(fileName: string): boolean {
   return ALLOWED_SUBTITLE_EXTENSIONS.includes(getFileExtension(fileName));
 }
 
-export function isAllowedLibraryFileName(fileName: string): boolean {
-  return isAllowedVideoFileName(fileName) || isAllowedSubtitleFileName(fileName);
-}
-
 export async function ensureAppDirectories(): Promise<void> {
   await FileSystem.makeDirectoryAsync(getVideoDirectory(), { intermediates: true });
   await FileSystem.makeDirectoryAsync(getTempUploadDirectory(), { intermediates: true });
@@ -61,10 +56,10 @@ export async function clearTempUploads(): Promise<void> {
 }
 
 export function sanitizeFileName(input: string): string {
-  const leafName = input.split(/[\\/]/).pop()?.trim() || 'video.mp4';
+  const leafName = input.split(/[\\/]/).pop()?.trim() || 'upload';
   const cleaned = leafName.replace(/[^a-zA-Z0-9._ -]/g, '_').replace(/\s+/g, ' ');
-  const extension = getFileExtension(cleaned) || '.mp4';
-  const baseName = cleaned.slice(0, cleaned.length - extension.length).replace(/\.+$/g, '').trim() || 'video';
+  const extension = getFileExtension(cleaned);
+  const baseName = cleaned.slice(0, cleaned.length - extension.length).replace(/\.+$/g, '').trim() || 'upload';
 
   return `${baseName}${extension.toLowerCase()}`;
 }
@@ -77,11 +72,6 @@ export async function createUploadTarget(fileName: string): Promise<{
   await ensureAppDirectories();
 
   const sanitized = sanitizeFileName(fileName);
-
-  if (!isAllowedLibraryFileName(sanitized)) {
-    throw new Error(`Unsupported file type. Use ${ALLOWED_UPLOAD_EXTENSIONS.join(', ')}`);
-  }
-
   const extension = getFileExtension(sanitized);
   const rawBaseName = sanitized.slice(0, sanitized.length - extension.length);
   let counter = 0;
@@ -111,7 +101,7 @@ export async function listLibraryItems(): Promise<LibraryItem[]> {
 
   const entries = await FileSystem.readDirectoryAsync(getVideoDirectory());
   const items = await Promise.all(
-    entries.filter(isAllowedLibraryFileName).map(async (entry) => {
+    entries.map(async (entry) => {
       const uri = `${getVideoDirectory()}${entry}`;
       const info = await FileSystem.getInfoAsync(uri);
 
@@ -121,7 +111,7 @@ export async function listLibraryItems(): Promise<LibraryItem[]> {
 
       return {
         id: uri,
-        kind: isAllowedSubtitleFileName(entry) ? 'subtitle' : 'video',
+        kind: isAllowedSubtitleFileName(entry) ? 'subtitle' : isAllowedVideoFileName(entry) ? 'video' : 'file',
         name: entry,
         uri,
         size: info.size ?? 0,

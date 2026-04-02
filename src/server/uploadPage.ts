@@ -1,12 +1,8 @@
 type UploadPageOptions = {
   chunkSize: number;
-  supportedExtensions: string[];
 };
 
-export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOptions): string {
-  const acceptList = ['video/*', ...supportedExtensions].join(',');
-  const supportedExtensionsJson = JSON.stringify(supportedExtensions);
-
+export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -231,14 +227,14 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         <h2>Upload files</h2>
         <p>Keep this page open until the progress reaches 100% and the app confirms the file is saved. You can also drag files anywhere onto this page.</p>
         <div style="margin-top: 18px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
-          <button class="button" id="pick-button" type="button">Choose videos</button>
+          <button class="button" id="pick-button" type="button">Choose files</button>
           <span class="empty" id="picker-state">Ready for new uploads.</span>
         </div>
         <div class="batch-status" id="batch-status">
           <span><strong id="batch-progress">0/0</strong> files completed</span>
           <span>Speed <strong id="batch-speed">Idle</strong></span>
         </div>
-        <input id="file-input" type="file" accept="${acceptList}" multiple hidden />
+        <input id="file-input" type="file" multiple hidden />
         <div class="queue" id="queue">
           <div class="empty">No uploads yet.</div>
         </div>
@@ -247,13 +243,12 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
 
     <div class="drop-overlay" id="drop-overlay" aria-hidden="true">
       <div class="drop-overlay-content">
-        <div class="drop-overlay-title">Drop videos to upload</div>
+        <div class="drop-overlay-title">Drop files to upload</div>
         <div class="drop-overlay-copy">Release anywhere on this page and the upload starts immediately.</div>
       </div>
     </div>
 
     <script>
-      const supportedExtensions = ${supportedExtensionsJson};
       const pickButton = document.getElementById('pick-button');
       const fileInput = document.getElementById('file-input');
       const queue = document.getElementById('queue');
@@ -324,11 +319,6 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
       function hasFilePayload(event) {
         const types = Array.from((event.dataTransfer && event.dataTransfer.types) || []);
         return types.includes('Files');
-      }
-
-      function isAllowedFile(file) {
-        const lowerName = file.name.toLowerCase();
-        return file.type.startsWith('video/') || supportedExtensions.some((extension) => lowerName.endsWith(extension));
       }
 
       function setDragActive(active) {
@@ -464,13 +454,6 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
           return;
         }
 
-        const invalidFiles = files.filter((file) => !isAllowedFile(file));
-
-        if (invalidFiles.length) {
-          setPickerState('Only video files are allowed. Remove unsupported files and try again.');
-          return;
-        }
-
         pickButton.disabled = true;
         totalFilesInBatch = files.length;
         completedFilesInBatch = 0;
@@ -493,7 +476,7 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         pickButton.disabled = false;
         fileInput.value = '';
         updateBatchStatus(0);
-        setPickerState('Done. You can upload more videos.');
+        setPickerState('Done. You can upload more files.');
       }
 
       pickButton.addEventListener('click', () => fileInput.click());
@@ -512,7 +495,7 @@ export function buildUploadPage({ chunkSize, supportedExtensions }: UploadPageOp
         event.preventDefault();
         dragDepth += 1;
         setDragActive(true);
-        setPickerState('Drop videos anywhere to upload.');
+        setPickerState('Drop files anywhere to upload.');
       });
 
       window.addEventListener('dragover', (event) => {

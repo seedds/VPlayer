@@ -3,7 +3,6 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 import type { UploadActivity } from '../lib/types';
 import {
-  ALLOWED_UPLOAD_EXTENSIONS,
   clearTempUploads,
   createUploadTarget,
   ensureAppDirectories,
@@ -220,7 +219,6 @@ class LocalUploadServer {
         return htmlResponse(
           buildUploadPage({
             chunkSize: CHUNK_SIZE,
-            supportedExtensions: ALLOWED_UPLOAD_EXTENSIONS,
           }),
         );
       }
@@ -230,7 +228,6 @@ class LocalUploadServer {
           ok: true,
           port: this.port,
           activeUploads: this.uploads.size,
-          supportedExtensions: ALLOWED_UPLOAD_EXTENSIONS,
         });
       }
 

@@ -18,7 +18,17 @@ export type SubtitleItem = {
   extension: string;
 };
 
-export type LibraryItem = VideoItem | SubtitleItem;
+export type FileItem = {
+  id: string;
+  kind: 'file';
+  name: string;
+  uri: string;
+  size: number;
+  modified: number;
+  extension: string;
+};
+
+export type LibraryItem = VideoItem | SubtitleItem | FileItem;
 
 export type UploadStatus = 'idle' | 'receiving' | 'complete' | 'error' | 'stopped';
 

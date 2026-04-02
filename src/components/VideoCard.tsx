@@ -36,6 +36,30 @@ export function VideoCard({
       ? Math.max(0, Math.min(1, savedPositionSeconds / durationSeconds))
       : 0;
 
+  function getPlaceholderLabel(): string {
+    if (video.kind === 'subtitle') {
+      return 'SRT';
+    }
+
+    if (video.kind === 'file') {
+      return 'File';
+    }
+
+    return 'Video';
+  }
+
+  function getMetaText(): string {
+    if (video.kind === 'video') {
+      return `${formatDuration(savedPositionSeconds)} / ${formatDuration(durationSeconds)}`;
+    }
+
+    if (video.kind === 'subtitle') {
+      return 'Subtitle file';
+    }
+
+    return 'File cannot be played';
+  }
+
   return (
     <Pressable onLongPress={onLongPress} onPress={onPlay} style={({ pressed }) => [styles.card, selected && styles.cardSelected, pressed && styles.cardPressed]}>
       <View style={styles.primaryAction}>
@@ -44,7 +68,7 @@ export function VideoCard({
             <Image contentFit="cover" source={thumbnailSource} style={styles.thumbnail} />
           ) : (
             <View style={styles.thumbnailPlaceholder}>
-              <Text style={styles.thumbnailPlaceholderText}>{isVideo ? 'Video' : 'SRT'}</Text>
+              <Text style={styles.thumbnailPlaceholderText}>{getPlaceholderLabel()}</Text>
             </View>
           )}
         </View>
@@ -54,7 +78,7 @@ export function VideoCard({
             {video.name}
           </Text>
           <Text numberOfLines={1} style={styles.meta}>
-            {isVideo ? `${formatDuration(savedPositionSeconds)} / ${formatDuration(durationSeconds)}` : 'Subtitle file'}
+            {getMetaText()}
           </Text>
         </View>
       </View>
