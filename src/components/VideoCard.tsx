@@ -31,6 +31,7 @@ export function VideoCard({
   video,
 }: VideoCardProps) {
   const isVideo = video.kind === 'video';
+  const isFolder = video.kind === 'folder';
   const playbackProgress =
     isVideo && typeof durationSeconds === 'number' && durationSeconds > 0 && typeof savedPositionSeconds === 'number'
       ? Math.max(0, Math.min(1, savedPositionSeconds / durationSeconds))
@@ -74,6 +75,10 @@ export function VideoCard({
         <View style={styles.thumbnailWrap}>
           {isVideo && thumbnailSource ? (
             <Image contentFit="cover" source={thumbnailSource} style={styles.thumbnail} />
+          ) : isFolder ? (
+            <View style={[styles.thumbnailPlaceholder, styles.folderThumbnailPlaceholder]}>
+              <FolderThumbnailIcon />
+            </View>
           ) : (
             <View style={styles.thumbnailPlaceholder}>
               <Text style={styles.thumbnailPlaceholderText}>{getPlaceholderLabel()}</Text>
@@ -96,6 +101,7 @@ export function VideoCard({
           <View style={styles.badgeSlot}>
             {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
           </View>
+          <View style={styles.navSlot}>{isFolder ? <Text style={styles.folderChevron}>{'>'}</Text> : null}</View>
           <View style={styles.actionSlot}>
             <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
               <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
@@ -107,6 +113,7 @@ export function VideoCard({
           <View style={styles.badgeSlot}>
             {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
           </View>
+          <View style={styles.navSlot}>{isFolder ? <Text style={styles.folderChevron}>{'>'}</Text> : null}</View>
           <View style={styles.actionSlot}>
             <Pressable
               onPress={(event) => {
@@ -121,6 +128,22 @@ export function VideoCard({
         </View>
       )}
     </Pressable>
+  );
+}
+
+function FolderThumbnailIcon() {
+  return (
+    <Svg height={36} viewBox="0 0 52 36" width={52}>
+      <Path
+        d="M4 11.5C4 8.5 6.46 6 9.5 6h10.42c1.36 0 2.66-.54 3.62-1.5l1.34-1.34C25.84 2.2 27.14 1.66 28.5 1.66h13.17C44.61 1.66 47 4.06 47 7v18.5c0 3.04-2.46 5.5-5.5 5.5h-32C6.46 31 4 28.54 4 25.5z"
+        fill="#f8f1e8"
+        stroke="#c97846"
+        strokeLinejoin="round"
+        strokeWidth={2.2}
+      />
+      <Path d="M4 13h43" opacity={0.24} stroke="#c97846" strokeLinecap="round" strokeWidth={1.6} />
+      <Path d="M18.5 6h8.25" opacity={0.18} stroke="#c97846" strokeLinecap="round" strokeWidth={1.8} />
+    </Svg>
   );
 }
 
@@ -205,6 +228,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#1f6f68',
   },
+  folderThumbnailPlaceholder: {
+    backgroundColor: '#fff5eb',
+  },
   thumbnailPlaceholderText: {
     color: '#f6f1eb',
     fontSize: 11,
@@ -232,10 +258,15 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   badgeSlot: {
     width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navSlot: {
+    width: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -251,6 +282,12 @@ const styles = StyleSheet.create({
     color: '#9e3e28',
     fontSize: 13,
     fontWeight: '700',
+  },
+  folderChevron: {
+    color: '#9a8c80',
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 18,
   },
   newLabel: {
     color: '#1f6f68',
