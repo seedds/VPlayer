@@ -208,6 +208,46 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         justify-content: flex-end;
       }
 
+      .library-feedback {
+        margin-top: 12px;
+        min-height: 18px;
+      }
+
+      .library-feedback[data-tone="error"] {
+        color: #9e3e28;
+      }
+
+      .library-inline-form {
+        margin-top: 14px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .library-inline-input {
+        flex: 1 1 220px;
+        min-width: 0;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--ink);
+        font: inherit;
+        padding: 12px 14px;
+      }
+
+      .library-inline-input:focus {
+        outline: 2px solid rgba(198, 103, 61, 0.28);
+        outline-offset: 2px;
+      }
+
+      .library-message {
+        padding: 18px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.74);
+        border: 1px solid var(--line);
+      }
+
       .track {
         margin-top: 12px;
         height: 10px;
@@ -320,6 +360,12 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           </div>
         </div>
         <div class="breadcrumbs" id="breadcrumbs" style="margin-top: 16px;"></div>
+        <div class="library-feedback empty" id="library-feedback"></div>
+        <form class="library-inline-form" hidden id="new-folder-form">
+          <input autocomplete="off" class="library-inline-input" id="new-folder-input" maxlength="80" placeholder="Folder name" type="text" />
+          <button class="button" id="create-folder-button" type="submit">Create</button>
+          <button class="ghost-button" id="cancel-folder-button" type="button">Cancel</button>
+        </form>
         <div class="library-list" id="library-list">
           <div class="empty">Loading library...</div>
         </div>
@@ -362,10 +408,15 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       const batchProgress = document.getElementById('batch-progress');
       const batchSpeed = document.getElementById('batch-speed');
       const libraryList = document.getElementById('library-list');
+      const libraryFeedback = document.getElementById('library-feedback');
       const breadcrumbs = document.getElementById('breadcrumbs');
       const upButton = document.getElementById('up-button');
       const refreshButton = document.getElementById('refresh-button');
       const newFolderButton = document.getElementById('new-folder-button');
+      const newFolderForm = document.getElementById('new-folder-form');
+      const newFolderInput = document.getElementById('new-folder-input');
+      const createFolderButton = document.getElementById('create-folder-button');
+      const cancelFolderButton = document.getElementById('cancel-folder-button');
       const defaultChunkSize = ${chunkSize};
       let currentPath = '';
       let dragDepth = 0;
@@ -374,6 +425,44 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       function setPickerState(text) {
         pickerState.textContent = text;
+      }
+
+      function setLibraryFeedback(text, tone) {
+        libraryFeedback.textContent = text || '';
+
+        if (text) {
+          libraryFeedback.removeAttribute('hidden');
+        } else {
+          libraryFeedback.setAttribute('hidden', 'hidden');
+        }
+
+        if (tone) {
+          libraryFeedback.setAttribute('data-tone', tone);
+        } else {
+          libraryFeedback.removeAttribute('data-tone');
+        }
+      }
+
+      function renderLibraryMessage(text, tone) {
+        libraryList.innerHTML = '';
+        const message = document.createElement('div');
+        message.className = 'library-message ' + (tone === 'error' ? 'empty' : 'empty');
+        message.textContent = text;
+        libraryList.append(message);
+      }
+
+      function setNewFolderFormVisible(visible) {
+        if (visible) {
+          newFolderForm.removeAttribute('hidden');
+          window.setTimeout(() => {
+            newFolderInput.focus();
+            newFolderInput.select();
+          }, 0);
+          return;
+        }
+
+        newFolderForm.setAttribute('hidden', 'hidden');
+        newFolderInput.value = '';
       }
 
       function splitPath(path) {
@@ -459,7 +548,11 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       function hasFilePayload(event) {
         const types = Array.from((event.dataTransfer && event.dataTransfer.types) || []);
-        return types.includes('Files');
+        return types.indexOf('Files') !== -1;
+      }
+
+      function flattenArrays(items) {
+        return items.reduce((all, item) => all.concat(item), []);
       }
 
       function setDragActive(active) {
@@ -534,12 +627,18 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           }
 
           accumulatedPath = joinPath(accumulatedPath, segment);
+          const breadcrumbPath = accumulatedPath;
           const button = document.createElement('button');
           button.className = 'path-button';
           button.type = 'button';
           button.textContent = segment;
           button.addEventListener('click', () => {
-            loadLibrary(accumulatedPath).catch((error) => setPickerState(error.message || 'Unable to load library.'));
+            loadLibrary(breadcrumbPath).catch((error) => {
+              const message = error && error.message ? error.message : 'Unable to load library.';
+              setPickerState(message);
+              setLibraryFeedback(message, 'error');
+              renderLibraryMessage(message, 'error');
+            });
           });
           breadcrumbs.append(button);
         });
@@ -568,10 +667,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         libraryList.innerHTML = '';
 
         if (!items.length) {
-          const empty = document.createElement('div');
-          empty.className = 'empty';
-          empty.textContent = 'This folder is empty.';
-          libraryList.append(empty);
+          renderLibraryMessage('This folder is empty.');
           return;
         }
 
@@ -589,7 +685,12 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           if (item.kind === 'folder') {
             title.type = 'button';
             title.addEventListener('click', () => {
-              loadLibrary(item.relativePath).catch((error) => setPickerState(error.message || 'Unable to open folder.'));
+              loadLibrary(item.relativePath).catch((error) => {
+                const message = error && error.message ? error.message : 'Unable to open folder.';
+                setPickerState(message);
+                setLibraryFeedback(message, 'error');
+                renderLibraryMessage(message, 'error');
+              });
             });
           }
 
@@ -602,7 +703,12 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
             openButton.type = 'button';
             openButton.textContent = 'Open';
             openButton.addEventListener('click', () => {
-              loadLibrary(item.relativePath).catch((error) => setPickerState(error.message || 'Unable to open folder.'));
+              loadLibrary(item.relativePath).catch((error) => {
+                const message = error && error.message ? error.message : 'Unable to open folder.';
+                setPickerState(message);
+                setLibraryFeedback(message, 'error');
+                renderLibraryMessage(message, 'error');
+              });
             });
             actions.append(openButton);
           }
@@ -624,9 +730,12 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
                 relativePath: item.relativePath,
                 entryType: item.kind === 'folder' ? 'folder' : 'file',
               });
+              setLibraryFeedback('Deleted ' + item.name + '.', null);
               await loadLibrary(currentPath);
             } catch (error) {
-              setPickerState(error.message || 'Delete failed.');
+              const message = error && error.message ? error.message : 'Delete failed.';
+              setPickerState(message);
+              setLibraryFeedback(message, 'error');
             }
           });
           actions.append(deleteButton);
@@ -649,8 +758,10 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       }
 
       async function loadLibrary(path) {
+        renderLibraryMessage('Loading library...');
         const response = await postJson('/library/list', { path: path || '' });
         currentPath = response.path || '';
+        setLibraryFeedback(currentPath ? 'Current folder: ' + currentPath : 'Current folder: root', null);
         renderBreadcrumbs();
         renderLibrary(response.items || []);
       }
@@ -795,7 +906,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
         const entries = await readAllDirectoryEntries(entry.createReader());
         const nested = await Promise.all(entries.map((child) => walkEntry(child, relativePath)));
-        return nested.flat();
+        return flattenArrays(nested);
       }
 
       async function collectDroppedFiles(dataTransfer) {
@@ -805,7 +916,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           .filter(Boolean);
 
         if (entryItems.length > 0) {
-          const nestedFiles = (await Promise.all(entryItems.map((entry) => walkEntry(entry, '')))).flat();
+          const nestedFiles = flattenArrays(await Promise.all(entryItems.map((entry) => walkEntry(entry, ''))));
 
           if (nestedFiles.length > 0) {
             return nestedFiles;
@@ -818,26 +929,58 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       pickButton.addEventListener('click', () => fileInput.click());
       pickFolderButton.addEventListener('click', () => folderInput.click());
       refreshButton.addEventListener('click', () => {
-        loadLibrary(currentPath).catch((error) => setPickerState(error.message || 'Unable to load library.'));
+        loadLibrary(currentPath).catch((error) => {
+          const message = error && error.message ? error.message : 'Unable to load library.';
+          setPickerState(message);
+          setLibraryFeedback(message, 'error');
+          renderLibraryMessage(message, 'error');
+        });
       });
       upButton.addEventListener('click', () => {
-        loadLibrary(getParentPath(currentPath)).catch((error) => setPickerState(error.message || 'Unable to load library.'));
+        loadLibrary(getParentPath(currentPath)).catch((error) => {
+          const message = error && error.message ? error.message : 'Unable to load library.';
+          setPickerState(message);
+          setLibraryFeedback(message, 'error');
+          renderLibraryMessage(message, 'error');
+        });
       });
-      newFolderButton.addEventListener('click', async () => {
-        const name = window.prompt('Folder name');
+      newFolderButton.addEventListener('click', () => {
+        setLibraryFeedback('Enter a folder name, then press Create.', null);
+        setNewFolderFormVisible(true);
+      });
+      cancelFolderButton.addEventListener('click', () => {
+        setNewFolderFormVisible(false);
+        setLibraryFeedback(currentPath ? 'Current folder: ' + currentPath : 'Current folder: root', null);
+      });
+      newFolderForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const name = newFolderInput.value.trim();
 
         if (!name) {
+          setLibraryFeedback('Folder name is required.', 'error');
+          newFolderInput.focus();
           return;
         }
+
+        createFolderButton.disabled = true;
+        cancelFolderButton.disabled = true;
+        setLibraryFeedback('Creating folder...', null);
 
         try {
           await postJson('/library/folder', {
             parentPath: currentPath,
             name,
           });
+          setNewFolderFormVisible(false);
+          setLibraryFeedback('Created folder ' + name + '.', null);
           await loadLibrary(currentPath);
         } catch (error) {
-          setPickerState(error.message || 'Unable to create folder.');
+          const message = error && error.message ? error.message : 'Unable to create folder.';
+          setPickerState(message);
+          setLibraryFeedback(message, 'error');
+        } finally {
+          createFolderButton.disabled = false;
+          cancelFolderButton.disabled = false;
         }
       });
       fileInput.addEventListener('change', () => {
@@ -910,8 +1053,12 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           });
       });
 
+      setLibraryFeedback('Loading current folder...', null);
       loadLibrary('').catch((error) => {
-        setPickerState(error.message || 'Unable to load library.');
+        const message = error && error.message ? error.message : 'Unable to load library.';
+        setPickerState(message);
+        setLibraryFeedback(message, 'error');
+        renderLibraryMessage(message, 'error');
       });
     </script>
   </body>
