@@ -17,7 +17,7 @@ import {
 import { deleteThumbnailForVideo } from '../lib/videoThumbnails';
 import { buildUploadPage } from './uploadPage';
 
-export const DEFAULT_SERVER_PORT = 8080;
+export const DEFAULT_SERVER_PORT = 8081;
 
 type UploadSession = {
   uploadId: string;

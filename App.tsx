@@ -1035,7 +1035,7 @@ function UploadView({
             <TextInput
               keyboardType="number-pad"
               onChangeText={setPortInput}
-              placeholder="8080"
+              placeholder="8081"
               placeholderTextColor="#8f857b"
               style={styles.portInput}
               value={portInput}
