@@ -680,7 +680,7 @@ export default function App() {
         thumbnailJobUrisRef.current.delete(uri);
       });
     };
-  }, [loading, videoItems]);
+  }, [loading, playbackStateByUri, videoItems]);
 
   useEffect(() => {
     if (!loading && activeTab === 'upload') {
