@@ -1,12 +1,20 @@
 import { File } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 
-import type { UploadActivity } from '../lib/types';
+import type { LibraryItem, UploadActivity } from '../lib/types';
+import { clearPlaybackProgressForUris } from '../lib/playbackState';
 import {
   clearTempUploads,
+  createLibraryFolder,
   createUploadTarget,
+  deleteLibraryItem,
   ensureAppDirectories,
+  getLibraryItem,
+  listAllVideoItems,
+  listLibraryItems,
+  normalizeLibraryDirectoryPath,
 } from '../lib/videoLibrary';
+import { deleteThumbnailForVideo } from '../lib/videoThumbnails';
 import { buildUploadPage } from './uploadPage';
 
 export const DEFAULT_SERVER_PORT = 8080;
@@ -15,6 +23,7 @@ type UploadSession = {
   uploadId: string;
   fileName: string;
   finalUri: string;
+  relativePath: string;
   tempUri: string;
   totalSize: number;
   receivedBytes: number;
@@ -91,6 +100,15 @@ function readNumber(input: unknown, fieldName: string): number {
   return input;
 }
 
+function readOptionalString(input: unknown): string | null {
+  if (typeof input !== 'string') {
+    return null;
+  }
+
+  const trimmed = input.trim();
+  return trimmed ? trimmed : null;
+}
+
 function normalizeHeaders(headers: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
 }
@@ -133,6 +151,17 @@ function jsonResponse(body: object, statusCode = 200): NitroResponseLike {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown server error.';
+}
+
+function serializeLibraryItem(item: LibraryItem) {
+  return {
+    kind: item.kind,
+    name: item.name,
+    modified: item.modified,
+    parentPath: item.parentPath,
+    relativePath: item.relativePath,
+    ...(item.kind === 'folder' ? {} : { extension: item.extension, size: item.size }),
+  };
 }
 
 class LocalUploadServer {
@@ -235,6 +264,18 @@ class LocalUploadServer {
         return await this.handleInit(request);
       }
 
+      if (request.method === 'POST' && request.path === '/library/list') {
+        return await this.handleList(request);
+      }
+
+      if (request.method === 'POST' && request.path === '/library/folder') {
+        return await this.handleCreateFolder(request);
+      }
+
+      if (request.method === 'POST' && request.path === '/library/delete') {
+        return await this.handleDelete(request);
+      }
+
       if (request.method === 'POST' && request.path === '/upload/chunk') {
         return await this.handleChunk(request);
       }
@@ -256,20 +297,21 @@ class LocalUploadServer {
   private async handleInit(request: NitroRequestLike): Promise<NitroResponseLike> {
     try {
       const body = parseJsonBody(request.body);
-      const fileName = readString(body.fileName, 'fileName');
+      const relativePath = readOptionalString(body.relativePath) ?? readString(body.fileName, 'fileName');
       const totalSize = readNumber(body.totalSize, 'totalSize');
 
       if (totalSize <= 0) {
         throw new Error('Upload must contain at least one byte.');
       }
 
-      const target = await createUploadTarget(fileName);
+      const target = await createUploadTarget(relativePath);
       const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       this.uploads.set(uploadId, {
         uploadId,
         fileName: target.fileName,
         finalUri: target.finalUri,
+        relativePath: target.relativePath,
         tempUri: target.tempUri,
         totalSize,
         receivedBytes: 0,
@@ -287,8 +329,73 @@ class LocalUploadServer {
       return jsonResponse({
         uploadId,
         fileName: target.fileName,
+        relativePath: target.relativePath,
         chunkSize: CHUNK_SIZE,
       });
+    } catch (error) {
+      return jsonResponse({ message: getErrorMessage(error) }, 400);
+    }
+  }
+
+  private async handleList(request: NitroRequestLike): Promise<NitroResponseLike> {
+    try {
+      const body = parseJsonBody(request.body);
+      const path = normalizeLibraryDirectoryPath(readOptionalString(body.path));
+      const items = await listLibraryItems(path || null);
+
+      return jsonResponse({
+        path,
+        items: items.map((item) => serializeLibraryItem(item)),
+      });
+    } catch (error) {
+      return jsonResponse({ message: getErrorMessage(error) }, 400);
+    }
+  }
+
+  private async handleCreateFolder(request: NitroRequestLike): Promise<NitroResponseLike> {
+    try {
+      const body = parseJsonBody(request.body);
+      const parentPath = normalizeLibraryDirectoryPath(readOptionalString(body.parentPath));
+      const name = readString(body.name, 'name');
+      const folder = await createLibraryFolder(parentPath || null, name);
+
+      this.emit({ status: 'idle', message: `Created folder ${folder.name}` });
+      await this.onLibraryChanged?.();
+
+      return jsonResponse({ ok: true, folder: serializeLibraryItem(folder) });
+    } catch (error) {
+      return jsonResponse({ message: getErrorMessage(error) }, 400);
+    }
+  }
+
+  private async handleDelete(request: NitroRequestLike): Promise<NitroResponseLike> {
+    try {
+      const body = parseJsonBody(request.body);
+      const relativePath = readString(body.relativePath, 'relativePath');
+      const entryType = readString(body.entryType, 'entryType');
+
+      if (entryType !== 'file' && entryType !== 'folder') {
+        throw new Error('Invalid entryType.');
+      }
+
+      const target = await getLibraryItem(relativePath, entryType);
+
+      if (!target) {
+        throw new Error('Library item not found.');
+      }
+
+      const videosToCleanup = target.kind === 'folder' ? await listAllVideoItems(target.relativePath) : target.kind === 'video' ? [target] : [];
+
+      if (videosToCleanup.length > 0) {
+        await clearPlaybackProgressForUris(videosToCleanup.map((video) => video.uri));
+        await Promise.all(videosToCleanup.map((video) => deleteThumbnailForVideo(video).catch(() => undefined)));
+      }
+
+      await deleteLibraryItem(target.uri);
+      this.emit({ status: 'idle', message: `Deleted ${target.name}` });
+      await this.onLibraryChanged?.();
+
+      return jsonResponse({ ok: true });
     } catch (error) {
       return jsonResponse({ message: getErrorMessage(error) }, 400);
     }
@@ -382,8 +489,8 @@ class LocalUploadServer {
       this.uploads.delete(uploadId);
       this.emit({
         status: 'complete',
-        message: `Saved ${session.fileName}`,
-        fileName: session.fileName,
+        message: `Saved ${session.relativePath}`,
+        fileName: session.relativePath,
         receivedBytes: session.receivedBytes,
         totalBytes: session.totalSize,
       });

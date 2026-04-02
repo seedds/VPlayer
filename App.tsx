@@ -25,7 +25,6 @@ import { isAndroidTabletLayout } from './src/lib/device';
 import { formatBytes, formatDate, getUploadProgress, normalizePort } from './src/lib/format';
 import {
   clearAllPlaybackProgress,
-  clearPlaybackPosition,
   clearPlaybackProgressForUris,
   getAllPlaybackState,
   savePlaybackDuration,
@@ -38,7 +37,14 @@ import {
   pruneThumbnailCache,
 } from './src/lib/videoThumbnails';
 import type { LibraryItem, UploadActivity, VideoItem } from './src/lib/types';
-import { deleteLibraryItem, ensureAppDirectories, getVideoItems, listLibraryItems } from './src/lib/videoLibrary';
+import {
+  deleteLibraryItem,
+  ensureAppDirectories,
+  getLibraryItem,
+  getVideoItems,
+  listAllVideoItems,
+  listLibraryItems,
+} from './src/lib/videoLibrary';
 import { DEFAULT_SERVER_PORT, localUploadServer } from './src/server/localUploadServer';
 
 type ActiveTab = 'library' | 'upload';
@@ -54,6 +60,20 @@ const INITIAL_ACTIVITY: UploadActivity = {
 const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
 const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
 
+function getParentPath(path: string | null): string | null {
+  if (!path) {
+    return null;
+  }
+
+  const segments = path.split('/').filter(Boolean);
+
+  if (segments.length <= 1) {
+    return null;
+  }
+
+  return segments.slice(0, -1).join('/');
+}
+
 export default function App() {
   const { width, height } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState<ActiveTab>('library');
@@ -63,6 +83,7 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedVideoUris, setSelectedVideoUris] = useState<Set<string>>(() => new Set());
+  const [currentFolderPath, setCurrentFolderPath] = useState<string | null>(null);
   const [activity, setActivity] = useState<UploadActivity>(INITIAL_ACTIVITY);
   const [ipAddress, setIpAddress] = useState<string | null>(null);
   const [serverRunning, setServerRunning] = useState(false);
@@ -72,6 +93,7 @@ export default function App() {
   const playbackStateByUriRef = useRef<PlaybackStateMap>({});
   const thumbnailSourceByUriRef = useRef<Record<string, ThumbnailSource | null | undefined>>({});
   const thumbnailJobUrisRef = useRef<Set<string>>(new Set());
+  const currentFolderPathRef = useRef<string | null>(null);
 
   const isAndroidTablet = useMemo(() => isAndroidTabletLayout(width, height), [height, width]);
   const progress = getUploadProgress(activity);
@@ -89,10 +111,29 @@ export default function App() {
     thumbnailSourceByUriRef.current = thumbnailSourceByUri;
   }, [thumbnailSourceByUri]);
 
-  const refreshLibrary = useCallback(async () => {
-    const [items, playbackState] = await Promise.all([listLibraryItems(), getAllPlaybackState()]);
-    setVideos(items);
-    setPlaybackStateByUri(playbackState);
+  useEffect(() => {
+    currentFolderPathRef.current = currentFolderPath;
+  }, [currentFolderPath]);
+
+  const refreshLibrary = useCallback(async (path: string | null = currentFolderPathRef.current) => {
+    async function loadPath(targetPath: string | null): Promise<void> {
+      if (targetPath) {
+        const folder = await getLibraryItem(targetPath, 'folder');
+
+        if (!folder || folder.kind !== 'folder') {
+          await loadPath(getParentPath(targetPath));
+          return;
+        }
+      }
+
+      const [items, playbackState] = await Promise.all([listLibraryItems(targetPath), getAllPlaybackState()]);
+      currentFolderPathRef.current = targetPath;
+      setCurrentFolderPath(targetPath);
+      setVideos(items);
+      setPlaybackStateByUri(playbackState);
+    }
+
+    await loadPath(path || null);
   }, []);
 
   const hydrateMissingDurations = useCallback(async (items: VideoItem[], playbackState: PlaybackStateMap) => {
@@ -174,6 +215,14 @@ export default function App() {
         return;
       }
     } catch { }
+  }, []);
+
+  const getCleanupVideos = useCallback(async (item: LibraryItem): Promise<VideoItem[]> => {
+    if (item.kind === 'folder') {
+      return await listAllVideoItems(item.relativePath);
+    }
+
+    return item.kind === 'video' ? [item] : [];
   }, []);
 
   const probeExistingServer = useCallback(async (port: number): Promise<{ ok: boolean; reportedPort: number | null }> => {
@@ -356,7 +405,7 @@ export default function App() {
 
   const handleDeleteVideo = useCallback(
     (video: LibraryItem) => {
-      Alert.alert('Delete file?', video.name, [
+      Alert.alert(video.kind === 'folder' ? 'Delete folder?' : 'Delete file?', video.name, [
         {
           text: 'Cancel',
           style: 'cancel',
@@ -367,12 +416,20 @@ export default function App() {
           onPress: () => {
             void (async () => {
               try {
-                if (video.kind === 'video') {
-                  await clearPlaybackPosition(video.uri);
-                  await deleteThumbnailForVideo(video);
+                const cleanupVideos = Array.from(
+                  new Map((await getCleanupVideos(video)).map((item) => [item.uri, item])).values(),
+                );
+
+                if (cleanupVideos.length > 0) {
+                  await clearPlaybackProgressForUris(cleanupVideos.map((item) => item.uri));
+                  await Promise.all(cleanupVideos.map((item) => deleteThumbnailForVideo(item)));
                   setThumbnailSourceByUri((current) => {
                     const next = { ...current };
-                    delete next[video.uri];
+
+                    for (const item of cleanupVideos) {
+                      delete next[item.uri];
+                    }
+
                     return next;
                   });
                 }
@@ -387,7 +444,7 @@ export default function App() {
         },
       ]);
     },
-    [refreshLibrary],
+    [getCleanupVideos, refreshLibrary],
   );
 
   const handlePlayVideo = useCallback(
@@ -411,40 +468,41 @@ export default function App() {
       return;
     }
 
-    Alert.alert('Delete selected files?', `${selectedCount} file${selectedCount === 1 ? '' : 's'} will be removed.`, [
+    Alert.alert('Delete selected items?', `${selectedCount} item${selectedCount === 1 ? '' : 's'} will be removed.`, [
       {
         text: 'Cancel',
         style: 'cancel',
       },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void (async () => {
-            try {
-              const targets = videos.filter((video) => selectedVideoUris.has(video.uri));
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                const targets = videos.filter((video) => selectedVideoUris.has(video.uri));
+                const cleanupVideos = Array.from(
+                  new Map((await Promise.all(targets.map((video) => getCleanupVideos(video)))).flat().map((video) => [video.uri, video])).values(),
+                );
 
-              await Promise.all(
-                targets.map(async (video) => {
-                  if (video.kind === 'video') {
-                    await clearPlaybackPosition(video.uri);
-                    await deleteThumbnailForVideo(video);
-                  }
-
-                  await deleteLibraryItem(video.uri);
-                }),
-              );
-
-              setThumbnailSourceByUri((current) => {
-                const next = { ...current };
-
-                for (const video of targets) {
-                  if (video.kind === 'video') {
-                    delete next[video.uri];
-                  }
+                if (cleanupVideos.length > 0) {
+                  await clearPlaybackProgressForUris(cleanupVideos.map((video) => video.uri));
+                  await Promise.all(cleanupVideos.map((video) => deleteThumbnailForVideo(video)));
                 }
 
-                return next;
+                await Promise.all(
+                  targets.map(async (video) => {
+                    await deleteLibraryItem(video.uri);
+                  }),
+                );
+
+                setThumbnailSourceByUri((current) => {
+                  const next = { ...current };
+
+                  for (const video of cleanupVideos) {
+                    delete next[video.uri];
+                  }
+
+                  return next;
               });
 
               handleCancelSelection();
@@ -452,22 +510,20 @@ export default function App() {
             } catch (error) {
               Alert.alert('Delete failed', error instanceof Error ? error.message : 'Could not delete the selected files.');
             }
-          })();
+            })();
+          },
         },
-      },
-    ]);
-  }, [handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
+      ]);
+  }, [getCleanupVideos, handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
 
   const handleClearSelectedPlayback = useCallback(() => {
     if (selectedCount === 0) {
       return;
     }
 
-    const selectedVideos = videos.filter((video): video is VideoItem => video.kind === 'video' && selectedVideoUris.has(video.uri));
-
     Alert.alert(
       'Clear playback history?',
-      `Saved playback positions will be reset for ${selectedCount} selected file${selectedCount === 1 ? '' : 's'}.`,
+      'Saved playback positions will be reset for videos inside the selected items.',
       [
         {
           text: 'Cancel',
@@ -479,6 +535,11 @@ export default function App() {
           onPress: () => {
             void (async () => {
               try {
+                const targets = videos.filter((video) => selectedVideoUris.has(video.uri));
+                const selectedVideos = Array.from(
+                  new Map((await Promise.all(targets.map((video) => getCleanupVideos(video)))).flat().map((video) => [video.uri, video])).values(),
+                );
+
                 await clearPlaybackProgressForUris(selectedVideos.map((video) => video.uri));
                 handleCancelSelection();
                 await refreshLibrary();
@@ -490,7 +551,7 @@ export default function App() {
         },
       ],
     );
-  }, [handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
+  }, [getCleanupVideos, handleCancelSelection, refreshLibrary, selectedVideoUris, videos]);
 
   useEffect(() => {
     if (!loading && activeTab === 'library') {
@@ -507,7 +568,7 @@ export default function App() {
   }, [hydrateMissingDurations, loading, playbackStateByUri, videoItems]);
 
   useEffect(() => {
-    if (loading || videoItems.length === 0) {
+    if (loading) {
       return;
     }
 
@@ -515,7 +576,7 @@ export default function App() {
     let runThumbnailUris: Set<string> | null = null;
 
     async function hydrateMissingThumbnails() {
-      await pruneThumbnailCache(videoItems);
+      await pruneThumbnailCache(await listAllVideoItems());
 
       const queuedVideos = videoItems.filter((video) => {
         if (thumbnailSourceByUriRef.current[video.uri] !== undefined || thumbnailJobUrisRef.current.has(video.uri)) {
@@ -692,6 +753,7 @@ export default function App() {
               </View>
             ) : activeTab === 'library' ? (
               <LibraryView
+                currentFolderPath={currentFolderPath}
                 onClearPlayback={() => {
                   Alert.alert('Clear playback history?', 'This resets all saved playback positions and marks every video as new.', [
                     {
@@ -722,6 +784,14 @@ export default function App() {
                 onCancelSelection={handleCancelSelection}
                 onClearSelectedPlayback={handleClearSelectedPlayback}
                 onDeleteSelected={handleDeleteSelected}
+                onNavigateUp={() => {
+                  handleCancelSelection();
+                  void refreshLibrary(getParentPath(currentFolderPath));
+                }}
+                onOpenFolder={(path) => {
+                  handleCancelSelection();
+                  void refreshLibrary(path);
+                }}
                 videos={videos}
                 onDeleteVideo={handleDeleteVideo}
                 onLongPressVideo={(video) => {
@@ -782,10 +852,13 @@ function UploadWakeLock() {
 }
 
 type LibraryViewProps = {
+  currentFolderPath: string | null;
   onCancelSelection: () => void;
   onClearPlayback: () => void;
   onClearSelectedPlayback: () => void;
   onDeleteSelected: () => void;
+  onNavigateUp: () => void;
+  onOpenFolder: (path: string) => void;
   playbackStateByUri: PlaybackStateMap;
   selectedCount: number;
   selectedVideoUris: Set<string>;
@@ -799,10 +872,13 @@ type LibraryViewProps = {
 };
 
 function LibraryView({
+  currentFolderPath,
   onCancelSelection,
   onClearPlayback,
   onClearSelectedPlayback,
   onDeleteSelected,
+  onNavigateUp,
+  onOpenFolder,
   playbackStateByUri,
   selectedCount,
   selectedVideoUris,
@@ -814,21 +890,28 @@ function LibraryView({
   onPlayVideo,
   onToggleVideoSelection,
 }: LibraryViewProps) {
-  function getBaseName(name: string): string {
-    return name.replace(/\.[^.]+$/, '').toLocaleLowerCase();
-  }
-
-  if (videos.length === 0) {
-    return (
-      <View style={styles.emptyState}>
-        <Text style={styles.emptyStateTitle}>No media yet</Text>
-        <Text style={styles.emptyStateText}>Use the Upload tab at the bottom, open the device URL on your computer, and send a file here.</Text>
-      </View>
-    );
-  }
+  const pathSegments = currentFolderPath ? currentFolderPath.split('/').filter(Boolean) : [];
 
   return (
     <View style={styles.libraryWrap}>
+      <ScrollView contentContainerStyle={styles.libraryBreadcrumbs} horizontal showsHorizontalScrollIndicator={false}>
+        <Pressable onPress={() => onOpenFolder('')} style={({ pressed }) => [styles.libraryPathButton, pressed && styles.libraryPathButtonPressed]}>
+          <Text style={styles.libraryPathButtonText}>Library</Text>
+        </Pressable>
+        {pathSegments.map((segment, index) => {
+          const path = pathSegments.slice(0, index + 1).join('/');
+
+          return (
+            <View key={path} style={styles.libraryPathSegment}>
+              <Text style={styles.libraryPathDivider}>/</Text>
+              <Pressable onPress={() => onOpenFolder(path)} style={({ pressed }) => [styles.libraryPathButton, pressed && styles.libraryPathButtonPressed]}>
+                <Text style={styles.libraryPathButtonText}>{segment}</Text>
+              </Pressable>
+            </View>
+          );
+        })}
+      </ScrollView>
+
       <View style={styles.libraryToolbar}>
         {selectionMode ? <Text style={styles.selectionCount}>{selectedCount} selected</Text> : <View />}
         {selectionMode ? (
@@ -844,13 +927,32 @@ function LibraryView({
             </Pressable>
           </View>
         ) : (
-          <Pressable onPress={onClearPlayback} style={({ pressed }) => [styles.clearPlaybackButton, pressed && styles.clearPlaybackButtonPressed]}>
-            <Text style={styles.clearPlaybackButtonText}>Clear All History</Text>
-          </Pressable>
+          <View style={styles.libraryToolbarActions}>
+            <Pressable
+              disabled={!currentFolderPath}
+              onPress={onNavigateUp}
+              style={({ pressed }) => [styles.clearPlaybackButton, !currentFolderPath && styles.clearPlaybackButtonDisabled, pressed && styles.clearPlaybackButtonPressed]}
+            >
+              <Text style={styles.clearPlaybackButtonText}>Up</Text>
+            </Pressable>
+            <Pressable onPress={onClearPlayback} style={({ pressed }) => [styles.clearPlaybackButton, pressed && styles.clearPlaybackButtonPressed]}>
+              <Text style={styles.clearPlaybackButtonText}>Clear All History</Text>
+            </Pressable>
+          </View>
         )}
       </View>
 
       <ScrollView contentContainerStyle={styles.libraryList} showsVerticalScrollIndicator={false}>
+        {videos.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateTitle}>{currentFolderPath ? 'This folder is empty' : 'No media yet'}</Text>
+            <Text style={styles.emptyStateText}>
+              {currentFolderPath
+                ? 'Use the Upload tab to add files here, or go up to another folder.'
+                : 'Use the Upload tab at the bottom, open the device URL on your computer, and send a file here.'}
+            </Text>
+          </View>
+        ) : null}
         {videos.map((video) => (
           <VideoCard
             key={video.id}
@@ -877,6 +979,10 @@ function LibraryView({
               }
 
               if (video.kind !== 'video') {
+                if (video.kind === 'folder') {
+                  onOpenFolder(video.relativePath);
+                }
+
                 return;
               }
 
@@ -1048,11 +1154,46 @@ const styles = StyleSheet.create({
   libraryWrap: {
     flex: 1,
   },
+  libraryBreadcrumbs: {
+    gap: 8,
+    alignItems: 'center',
+    paddingBottom: 10,
+  },
+  libraryPathSegment: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  libraryPathDivider: {
+    color: '#7b7067',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  libraryPathButton: {
+    borderRadius: 14,
+    backgroundColor: '#e3d7ca',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  libraryPathButtonPressed: {
+    opacity: 0.78,
+  },
+  libraryPathButtonText: {
+    color: '#4f463f',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   libraryToolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingBottom: 8,
+  },
+  libraryToolbarActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    justifyContent: 'flex-end',
   },
   libraryList: {
     gap: 0,
@@ -1066,6 +1207,9 @@ const styles = StyleSheet.create({
   },
   clearPlaybackButtonPressed: {
     opacity: 0.78,
+  },
+  clearPlaybackButtonDisabled: {
+    opacity: 0.52,
   },
   clearPlaybackButtonText: {
     color: '#4f463f',

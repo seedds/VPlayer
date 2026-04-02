@@ -37,6 +37,10 @@ export function VideoCard({
       : 0;
 
   function getPlaceholderLabel(): string {
+    if (video.kind === 'folder') {
+      return 'Folder';
+    }
+
     if (video.kind === 'subtitle') {
       return 'SRT';
     }
@@ -49,6 +53,10 @@ export function VideoCard({
   }
 
   function getMetaText(): string {
+    if (video.kind === 'folder') {
+      return 'Folder';
+    }
+
     if (video.kind === 'video') {
       return `${formatDuration(savedPositionSeconds)} / ${formatDuration(durationSeconds)}`;
     }

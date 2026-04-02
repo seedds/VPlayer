@@ -1,34 +1,35 @@
-export type VideoItem = {
+type LibraryEntry = {
   id: string;
+  name: string;
+  uri: string;
+  modified: number;
+  parentPath: string | null;
+  relativePath: string;
+};
+
+export type FolderItem = LibraryEntry & {
+  kind: 'folder';
+};
+
+export type VideoItem = LibraryEntry & {
   kind: 'video';
-  name: string;
-  uri: string;
   size: number;
-  modified: number;
   extension: string;
 };
 
-export type SubtitleItem = {
-  id: string;
+export type SubtitleItem = LibraryEntry & {
   kind: 'subtitle';
-  name: string;
-  uri: string;
   size: number;
-  modified: number;
   extension: string;
 };
 
-export type FileItem = {
-  id: string;
+export type FileItem = LibraryEntry & {
   kind: 'file';
-  name: string;
-  uri: string;
   size: number;
-  modified: number;
   extension: string;
 };
 
-export type LibraryItem = VideoItem | SubtitleItem | FileItem;
+export type LibraryItem = FolderItem | VideoItem | SubtitleItem | FileItem;
 
 export type UploadStatus = 'idle' | 'receiving' | 'complete' | 'error' | 'stopped';
 
