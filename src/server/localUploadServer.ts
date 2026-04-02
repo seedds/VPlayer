@@ -153,6 +153,10 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown server error.';
 }
 
+function parseRequestUrl(path: string): URL {
+  return new URL(path, 'http://local-upload-server');
+}
+
 function serializeLibraryItem(item: LibraryItem) {
   return {
     kind: item.kind,
@@ -161,6 +165,16 @@ function serializeLibraryItem(item: LibraryItem) {
     parentPath: item.parentPath,
     relativePath: item.relativePath,
     ...(item.kind === 'folder' ? {} : { extension: item.extension, size: item.size }),
+  };
+}
+
+async function serializeLibraryListing(path: string | null) {
+  const normalizedPath = normalizeLibraryDirectoryPath(path);
+  const items = await listLibraryItems(normalizedPath || null);
+
+  return {
+    path: normalizedPath,
+    items: items.map((item) => serializeLibraryItem(item)),
   };
 }
 
@@ -244,7 +258,10 @@ class LocalUploadServer {
 
   private async handleRequest(request: NitroRequestLike): Promise<NitroResponseLike> {
     try {
-      if (request.method === 'GET' && request.path === '/') {
+      const requestUrl = parseRequestUrl(request.path);
+      const pathname = requestUrl.pathname;
+
+      if (request.method === 'GET' && pathname === '/') {
         return htmlResponse(
           buildUploadPage({
             chunkSize: CHUNK_SIZE,
@@ -252,7 +269,7 @@ class LocalUploadServer {
         );
       }
 
-      if (request.method === 'GET' && request.path === '/health') {
+      if (request.method === 'GET' && pathname === '/health') {
         return jsonResponse({
           ok: true,
           port: this.port,
@@ -260,31 +277,31 @@ class LocalUploadServer {
         });
       }
 
-      if (request.method === 'POST' && request.path === '/upload/init') {
+      if (request.method === 'POST' && pathname === '/upload/init') {
         return await this.handleInit(request);
       }
 
-      if (request.method === 'POST' && request.path === '/library/list') {
-        return await this.handleList(request);
+      if (request.method === 'GET' && pathname === '/library/list') {
+        return await this.handleList(requestUrl);
       }
 
-      if (request.method === 'POST' && request.path === '/library/folder') {
+      if (request.method === 'POST' && pathname === '/library/folder') {
         return await this.handleCreateFolder(request);
       }
 
-      if (request.method === 'POST' && request.path === '/library/delete') {
+      if (request.method === 'POST' && pathname === '/library/delete') {
         return await this.handleDelete(request);
       }
 
-      if (request.method === 'POST' && request.path === '/upload/chunk') {
+      if (request.method === 'POST' && pathname === '/upload/chunk') {
         return await this.handleChunk(request);
       }
 
-      if (request.method === 'POST' && request.path === '/upload/complete') {
+      if (request.method === 'POST' && pathname === '/upload/complete') {
         return await this.handleComplete(request);
       }
 
-      if (request.method === 'POST' && request.path === '/upload/cancel') {
+      if (request.method === 'POST' && pathname === '/upload/cancel') {
         return await this.handleCancel(request);
       }
 
@@ -337,16 +354,11 @@ class LocalUploadServer {
     }
   }
 
-  private async handleList(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleList(requestUrl: URL): Promise<NitroResponseLike> {
     try {
-      const body = parseJsonBody(request.body);
-      const path = normalizeLibraryDirectoryPath(readOptionalString(body.path));
-      const items = await listLibraryItems(path || null);
+      const listing = await serializeLibraryListing(readOptionalString(requestUrl.searchParams.get('path')));
 
-      return jsonResponse({
-        path,
-        items: items.map((item) => serializeLibraryItem(item)),
-      });
+      return jsonResponse(listing);
     } catch (error) {
       return jsonResponse({ message: getErrorMessage(error) }, 400);
     }
@@ -362,7 +374,11 @@ class LocalUploadServer {
       this.emit({ status: 'idle', message: `Created folder ${folder.name}` });
       await this.onLibraryChanged?.();
 
-      return jsonResponse({ ok: true, folder: serializeLibraryItem(folder) });
+      return jsonResponse({
+        ok: true,
+        folder: serializeLibraryItem(folder),
+        ...(await serializeLibraryListing(parentPath || null)),
+      });
     } catch (error) {
       return jsonResponse({ message: getErrorMessage(error) }, 400);
     }
@@ -373,6 +389,7 @@ class LocalUploadServer {
       const body = parseJsonBody(request.body);
       const relativePath = readString(body.relativePath, 'relativePath');
       const entryType = readString(body.entryType, 'entryType');
+      const currentPath = normalizeLibraryDirectoryPath(readOptionalString(body.currentPath));
 
       if (entryType !== 'file' && entryType !== 'folder') {
         throw new Error('Invalid entryType.');
@@ -395,7 +412,10 @@ class LocalUploadServer {
       this.emit({ status: 'idle', message: `Deleted ${target.name}` });
       await this.onLibraryChanged?.();
 
-      return jsonResponse({ ok: true });
+      return jsonResponse({
+        ok: true,
+        ...(await serializeLibraryListing(currentPath || null)),
+      });
     } catch (error) {
       return jsonResponse({ message: getErrorMessage(error) }, 400);
     }

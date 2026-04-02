@@ -50,6 +50,10 @@ import { DEFAULT_SERVER_PORT, localUploadServer } from './src/server/localUpload
 type ActiveTab = 'library' | 'upload';
 type ButtonTone = 'primary' | 'danger';
 type ThumbnailSource = ImageProps['source'];
+type ThumbnailHydrationJob = {
+  cancel: () => void;
+  promise: Promise<void>;
+};
 
 const INITIAL_ACTIVITY: UploadActivity = {
   status: 'idle',
@@ -88,6 +92,7 @@ export default function App() {
   const [ipAddress, setIpAddress] = useState<string | null>(null);
   const [serverRunning, setServerRunning] = useState(false);
   const [activePort, setActivePort] = useState<number | null>(null);
+  const [libraryRevision, setLibraryRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [portInput, setPortInput] = useState(String(DEFAULT_SERVER_PORT));
   const playbackStateByUriRef = useRef<PlaybackStateMap>({});
@@ -131,6 +136,7 @@ export default function App() {
       setCurrentFolderPath(targetPath);
       setVideos(items);
       setPlaybackStateByUri(playbackState);
+      setLibraryRevision((current) => current + 1);
     }
 
     await loadPath(path || null);
@@ -192,6 +198,115 @@ export default function App() {
     if (didUpdate) {
       setPlaybackStateByUri(await getAllPlaybackState());
     }
+  }, []);
+
+  const startThumbnailHydration = useCallback((items: VideoItem[]): ThumbnailHydrationJob => {
+    let cancelled = false;
+    let runThumbnailUris: Set<string> | null = null;
+
+    const promise = (async () => {
+      const queuedVideos = items.filter((video) => {
+        if (thumbnailSourceByUriRef.current[video.uri] !== undefined || thumbnailJobUrisRef.current.has(video.uri)) {
+          return false;
+        }
+
+        thumbnailJobUrisRef.current.add(video.uri);
+        return true;
+      });
+
+      if (queuedVideos.length === 0) {
+        return;
+      }
+
+      runThumbnailUris = new Set(queuedVideos.map((video) => video.uri));
+
+      const retryCountsByUri = new Map<string, number>();
+      const queue = [...queuedVideos];
+
+      const runWorker = async () => {
+        while (!cancelled) {
+          const video = queue.shift();
+
+          if (!video) {
+            return;
+          }
+
+          let shouldReleaseJob = true;
+
+          try {
+            const cachedThumbnailUri = await getCachedThumbnailUri(video);
+
+            if (cachedThumbnailUri) {
+              if (!cancelled) {
+                setThumbnailSourceByUri((current) => ({
+                  ...current,
+                  [video.uri]: { uri: cachedThumbnailUri },
+                }));
+              }
+
+              retryCountsByUri.delete(video.uri);
+              continue;
+            }
+
+            const thumbnailUri = await generateThumbnailForVideo(
+              video,
+              playbackStateByUriRef.current[video.uri]?.durationSeconds,
+            );
+
+            if (!cancelled) {
+              setThumbnailSourceByUri((current) => ({
+                ...current,
+                [video.uri]: { uri: thumbnailUri },
+              }));
+            }
+
+            retryCountsByUri.delete(video.uri);
+          } catch {
+            const nextAttempt = (retryCountsByUri.get(video.uri) ?? 0) + 1;
+
+            if (!cancelled && nextAttempt < THUMBNAIL_HYDRATION_MAX_ATTEMPTS) {
+              retryCountsByUri.set(video.uri, nextAttempt);
+              queue.push(video);
+              shouldReleaseJob = false;
+              continue;
+            }
+
+            retryCountsByUri.delete(video.uri);
+
+            if (!cancelled) {
+              setThumbnailSourceByUri((current) => {
+                if (current[video.uri] === undefined) {
+                  return current;
+                }
+
+                const next = { ...current };
+                delete next[video.uri];
+                return next;
+              });
+            }
+          } finally {
+            if (shouldReleaseJob) {
+              thumbnailJobUrisRef.current.delete(video.uri);
+            }
+          }
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(THUMBNAIL_HYDRATION_CONCURRENCY, queuedVideos.length) }, () => runWorker()),
+      );
+    })();
+
+    return {
+      cancel: () => {
+        cancelled = true;
+
+        runThumbnailUris?.forEach((uri) => {
+          thumbnailJobUrisRef.current.delete(uri);
+        });
+      },
+      promise,
+    };
   }, []);
 
   const refreshNetwork = useCallback(async () => {
@@ -378,6 +493,8 @@ export default function App() {
         if (!isMounted) {
           return;
         }
+
+        setLoading(false);
 
         await startServer(DEFAULT_SERVER_PORT);
       } catch (error) {
@@ -572,115 +689,44 @@ export default function App() {
       return;
     }
 
+    const job = startThumbnailHydration(videoItems);
+    void job.promise;
+
+    return () => {
+      job.cancel();
+    };
+  }, [loading, playbackStateByUri, startThumbnailHydration, videoItems]);
+
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+
     let cancelled = false;
-    let runThumbnailUris: Set<string> | null = null;
+    let job: ThumbnailHydrationJob | null = null;
 
-    async function hydrateMissingThumbnails() {
-      await pruneThumbnailCache(await listAllVideoItems());
+    async function hydrateLibraryThumbnailsInBackground() {
+      const allVideos = await listAllVideoItems();
 
-      const queuedVideos = videoItems.filter((video) => {
-        if (thumbnailSourceByUriRef.current[video.uri] !== undefined || thumbnailJobUrisRef.current.has(video.uri)) {
-          return false;
-        }
-
-        thumbnailJobUrisRef.current.add(video.uri);
-        return true;
-      });
-
-      if (queuedVideos.length === 0) {
+      if (cancelled) {
         return;
       }
 
-      runThumbnailUris = new Set(queuedVideos.map((video) => video.uri));
+      job = startThumbnailHydration(allVideos);
+      await job.promise;
 
-      const retryCountsByUri = new Map<string, number>();
-      const queue = [...queuedVideos];
-
-      const runWorker = async () => {
-        while (!cancelled) {
-          const video = queue.shift();
-
-          if (!video) {
-            return;
-          }
-
-          let shouldReleaseJob = true;
-
-          try {
-            const cachedThumbnailUri = await getCachedThumbnailUri(video);
-
-            if (cachedThumbnailUri) {
-              if (!cancelled) {
-                setThumbnailSourceByUri((current) => ({
-                  ...current,
-                  [video.uri]: { uri: cachedThumbnailUri },
-                }));
-              }
-
-              retryCountsByUri.delete(video.uri);
-
-              continue;
-            }
-
-            const thumbnailUri = await generateThumbnailForVideo(
-              video,
-              playbackStateByUriRef.current[video.uri]?.durationSeconds,
-            );
-
-            if (!cancelled) {
-              setThumbnailSourceByUri((current) => ({
-                ...current,
-                [video.uri]: { uri: thumbnailUri },
-              }));
-            }
-
-            retryCountsByUri.delete(video.uri);
-          } catch {
-            const nextAttempt = (retryCountsByUri.get(video.uri) ?? 0) + 1;
-
-            if (!cancelled && nextAttempt < THUMBNAIL_HYDRATION_MAX_ATTEMPTS) {
-              retryCountsByUri.set(video.uri, nextAttempt);
-              queue.push(video);
-              shouldReleaseJob = false;
-              continue;
-            }
-
-            retryCountsByUri.delete(video.uri);
-
-            if (!cancelled) {
-              setThumbnailSourceByUri((current) => {
-                if (current[video.uri] === undefined) {
-                  return current;
-                }
-
-                const next = { ...current };
-                delete next[video.uri];
-                return next;
-              });
-            }
-          } finally {
-            if (shouldReleaseJob) {
-              thumbnailJobUrisRef.current.delete(video.uri);
-            }
-          }
-        }
-      };
-
-      await Promise.all(
-        Array.from({ length: Math.min(THUMBNAIL_HYDRATION_CONCURRENCY, queuedVideos.length) }, () => runWorker()),
-      );
+      if (!cancelled) {
+        await pruneThumbnailCache(allVideos);
+      }
     }
 
-    void hydrateMissingThumbnails();
+    void hydrateLibraryThumbnailsInBackground();
 
     return () => {
       cancelled = true;
-
-      runThumbnailUris?.forEach((uri) => {
-        thumbnailJobUrisRef.current.delete(uri);
-      });
+      job?.cancel();
     };
-  }, [loading, playbackStateByUri, videoItems]);
+  }, [libraryRevision, loading, startThumbnailHydration]);
 
   useEffect(() => {
     if (!loading && activeTab === 'upload') {
@@ -895,27 +941,8 @@ function LibraryView({
   onPlayVideo,
   onToggleVideoSelection,
 }: LibraryViewProps) {
-  const pathSegments = currentFolderPath ? currentFolderPath.split('/').filter(Boolean) : [];
-
   return (
     <View style={styles.libraryWrap}>
-      {pathSegments.length > 0 ? (
-        <ScrollView contentContainerStyle={styles.libraryBreadcrumbs} horizontal showsHorizontalScrollIndicator={false}>
-          {pathSegments.map((segment, index) => {
-            const path = pathSegments.slice(0, index + 1).join('/');
-
-            return (
-              <View key={path} style={styles.libraryPathSegment}>
-                {index > 0 ? <Text style={styles.libraryPathDivider}>/</Text> : null}
-                <Pressable onPress={() => onOpenFolder(path)} style={({ pressed }) => [styles.libraryPathButton, pressed && styles.libraryPathButtonPressed]}>
-                  <Text style={styles.libraryPathButtonText}>{segment}</Text>
-                </Pressable>
-              </View>
-            );
-          })}
-        </ScrollView>
-      ) : null}
-
       <View style={styles.libraryToolbar}>
         {selectionMode ? (
           <Text style={styles.selectionCount}>{selectedCount} selected</Text>
@@ -1158,35 +1185,6 @@ const styles = StyleSheet.create({
   },
   libraryWrap: {
     flex: 1,
-  },
-  libraryBreadcrumbs: {
-    gap: 8,
-    alignItems: 'center',
-    paddingBottom: 10,
-  },
-  libraryPathSegment: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  libraryPathDivider: {
-    color: '#7b7067',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  libraryPathButton: {
-    borderRadius: 14,
-    backgroundColor: '#e3d7ca',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  libraryPathButtonPressed: {
-    opacity: 0.78,
-  },
-  libraryPathButtonText: {
-    color: '#4f463f',
-    fontSize: 13,
-    fontWeight: '700',
   },
   libraryToolbar: {
     flexDirection: 'row',

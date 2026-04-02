@@ -150,16 +150,21 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       .queue,
       .library-list {
         display: grid;
-        gap: 12px;
+        gap: 8px;
         margin-top: 16px;
       }
 
       .upload-item,
       .library-item {
-        padding: 16px;
-        border-radius: 18px;
+        padding: 10px 12px;
+        border-radius: 14px;
         background: rgba(255, 255, 255, 0.74);
         border: 1px solid var(--line);
+      }
+
+      .upload-item {
+        padding: 16px;
+        border-radius: 18px;
       }
 
       .upload-row,
@@ -175,21 +180,19 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         align-items: center;
       }
 
+      .folder-item {
+        cursor: pointer;
+      }
+
+      .folder-item:hover {
+        background: rgba(255, 255, 255, 0.9);
+      }
+
       .upload-name,
       .library-name {
         font-weight: 700;
-        font-size: 15px;
+        font-size: 14px;
         color: var(--ink);
-      }
-
-      .open-folder {
-        border: 0;
-        padding: 0;
-        background: transparent;
-        color: inherit;
-        font: inherit;
-        cursor: pointer;
-        text-align: left;
       }
 
       .upload-state,
@@ -203,9 +206,15 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       .library-actions {
         display: flex;
-        gap: 8px;
+        gap: 6px;
         flex-wrap: wrap;
         justify-content: flex-end;
+      }
+
+      .library-actions .danger-button {
+        padding: 8px 12px;
+        font-size: 12px;
+        border-radius: 12px;
       }
 
       .library-feedback {
@@ -215,30 +224,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       .library-feedback[data-tone="error"] {
         color: #9e3e28;
-      }
-
-      .library-inline-form {
-        margin-top: 14px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
-      }
-
-      .library-inline-input {
-        flex: 1 1 220px;
-        min-width: 0;
-        border-radius: 14px;
-        border: 1px solid var(--line);
-        background: rgba(255, 255, 255, 0.82);
-        color: var(--ink);
-        font: inherit;
-        padding: 12px 14px;
-      }
-
-      .library-inline-input:focus {
-        outline: 2px solid rgba(198, 103, 61, 0.28);
-        outline-offset: 2px;
       }
 
       .library-message {
@@ -266,8 +251,12 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       .status-line,
       .library-meta {
-        margin-top: 10px;
+        margin-top: 4px;
         align-items: center;
+      }
+
+      .library-meta {
+        font-size: 12px;
       }
 
       .drop-overlay {
@@ -361,11 +350,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         </div>
         <div class="breadcrumbs" id="breadcrumbs" style="margin-top: 16px;"></div>
         <div class="library-feedback empty" id="library-feedback"></div>
-        <form class="library-inline-form" hidden id="new-folder-form">
-          <input autocomplete="off" class="library-inline-input" id="new-folder-input" maxlength="80" placeholder="Folder name" type="text" />
-          <button class="button" id="create-folder-button" type="submit">Create</button>
-          <button class="ghost-button" id="cancel-folder-button" type="button">Cancel</button>
-        </form>
         <div class="library-list" id="library-list">
           <div class="empty">Loading library...</div>
         </div>
@@ -413,10 +397,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       const upButton = document.getElementById('up-button');
       const refreshButton = document.getElementById('refresh-button');
       const newFolderButton = document.getElementById('new-folder-button');
-      const newFolderForm = document.getElementById('new-folder-form');
-      const newFolderInput = document.getElementById('new-folder-input');
-      const createFolderButton = document.getElementById('create-folder-button');
-      const cancelFolderButton = document.getElementById('cancel-folder-button');
       const defaultChunkSize = ${chunkSize};
       let currentPath = '';
       let dragDepth = 0;
@@ -446,23 +426,9 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       function renderLibraryMessage(text, tone) {
         libraryList.innerHTML = '';
         const message = document.createElement('div');
-        message.className = 'library-message ' + (tone === 'error' ? 'empty' : 'empty');
+        message.className = 'library-message empty';
         message.textContent = text;
         libraryList.append(message);
-      }
-
-      function setNewFolderFormVisible(visible) {
-        if (visible) {
-          newFolderForm.removeAttribute('hidden');
-          window.setTimeout(() => {
-            newFolderInput.focus();
-            newFolderInput.select();
-          }, 0);
-          return;
-        }
-
-        newFolderForm.setAttribute('hidden', 'hidden');
-        newFolderInput.value = '';
       }
 
       function splitPath(path) {
@@ -555,18 +521,33 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         return items.reduce((all, item) => all.concat(item), []);
       }
 
-      function setDragActive(active) {
-        document.body.classList.toggle('drag-active', active);
-      }
+      async function fetchJson(url, options, timeoutMs) {
+        const requestTimeoutMs = typeof timeoutMs === 'number' ? timeoutMs : 8000;
+        const requestOptions = options || {};
+        const supportsAbort = typeof AbortController === 'function';
+        const controller = supportsAbort ? new AbortController() : null;
+        let timeoutId = null;
 
-      async function postJson(path, payload) {
-        const response = await fetch(path, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
+        if (controller) {
+          requestOptions.signal = controller.signal;
+        }
+
+        const fetchPromise = fetch(url, requestOptions);
+        const timedPromise = new Promise((resolve, reject) => {
+          timeoutId = window.setTimeout(() => {
+            if (controller) {
+              controller.abort();
+            }
+
+            reject(new Error('Timed out while talking to the tablet.'));
+          }, requestTimeoutMs);
         });
+
+        const response = await Promise.race([fetchPromise, timedPromise]);
+
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
 
         const text = await response.text();
         let parsed = {};
@@ -586,32 +567,35 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         return parsed;
       }
 
+      function setDragActive(active) {
+        document.body.classList.toggle('drag-active', active);
+      }
+
+      async function postJson(path, payload) {
+        return await fetchJson(path, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      async function getJson(path) {
+        return await fetchJson(path, {
+          method: 'GET',
+        });
+      }
+
       async function postChunk(path, headers, blob) {
         const formData = new FormData();
         formData.append('file', blob, 'chunk.bin');
 
-        const response = await fetch(path, {
+        return await fetchJson(path, {
           method: 'POST',
           headers,
           body: formData,
         });
-
-        const text = await response.text();
-        let parsed = {};
-
-        if (text) {
-          try {
-            parsed = JSON.parse(text);
-          } catch (error) {
-            parsed = { message: text };
-          }
-        }
-
-        if (!response.ok) {
-          throw new Error(parsed.message || 'Upload request failed');
-        }
-
-        return parsed;
       }
 
       function renderBreadcrumbs() {
@@ -678,13 +662,13 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           const top = document.createElement('div');
           top.className = 'library-row';
 
-          const title = item.kind === 'folder' ? document.createElement('button') : document.createElement('div');
-          title.className = item.kind === 'folder' ? 'library-name open-folder' : 'library-name';
+          const title = document.createElement('div');
+          title.className = 'library-name';
           title.textContent = item.name;
 
           if (item.kind === 'folder') {
-            title.type = 'button';
-            title.addEventListener('click', () => {
+            row.classList.add('folder-item');
+            row.addEventListener('click', () => {
               loadLibrary(item.relativePath).catch((error) => {
                 const message = error && error.message ? error.message : 'Unable to open folder.';
                 setPickerState(message);
@@ -697,41 +681,27 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           const actions = document.createElement('div');
           actions.className = 'library-actions';
 
-          if (item.kind === 'folder') {
-            const openButton = document.createElement('button');
-            openButton.className = 'ghost-button';
-            openButton.type = 'button';
-            openButton.textContent = 'Open';
-            openButton.addEventListener('click', () => {
-              loadLibrary(item.relativePath).catch((error) => {
-                const message = error && error.message ? error.message : 'Unable to open folder.';
-                setPickerState(message);
-                setLibraryFeedback(message, 'error');
-                renderLibraryMessage(message, 'error');
-              });
-            });
-            actions.append(openButton);
-          }
-
           const deleteButton = document.createElement('button');
           deleteButton.className = 'danger-button';
           deleteButton.type = 'button';
           deleteButton.textContent = 'Delete';
-          deleteButton.addEventListener('click', async () => {
+          deleteButton.addEventListener('click', async (event) => {
+            event.stopPropagation();
             const label = item.kind === 'folder' ? 'folder' : 'file';
-            const confirmed = window.confirm('Delete this ' + label + '?\n\n' + item.relativePath);
+            const confirmed = window.confirm('Delete this ' + label + '?\\n\\n' + item.relativePath);
 
             if (!confirmed) {
               return;
             }
 
             try {
-              await postJson('/library/delete', {
+              const response = await postJson('/library/delete', {
                 relativePath: item.relativePath,
                 entryType: item.kind === 'folder' ? 'folder' : 'file',
+                currentPath,
               });
               setLibraryFeedback('Deleted ' + item.name + '.', null);
-              await loadLibrary(currentPath);
+              applyLibraryListing(response);
             } catch (error) {
               const message = error && error.message ? error.message : 'Delete failed.';
               setPickerState(message);
@@ -759,7 +729,12 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       async function loadLibrary(path) {
         renderLibraryMessage('Loading library...');
-        const response = await postJson('/library/list', { path: path || '' });
+        const query = path ? '?path=' + encodeURIComponent(path) : '';
+        const response = await getJson('/library/list' + query);
+        applyLibraryListing(response);
+      }
+
+      function applyLibraryListing(response) {
         currentPath = response.path || '';
         setLibraryFeedback(currentPath ? 'Current folder: ' + currentPath : 'Current folder: root', null);
         renderBreadcrumbs();
@@ -945,43 +920,34 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         });
       });
       newFolderButton.addEventListener('click', () => {
-        setLibraryFeedback('Enter a folder name, then press Create.', null);
-        setNewFolderFormVisible(true);
-      });
-      cancelFolderButton.addEventListener('click', () => {
-        setNewFolderFormVisible(false);
-        setLibraryFeedback(currentPath ? 'Current folder: ' + currentPath : 'Current folder: root', null);
-      });
-      newFolderForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const name = newFolderInput.value.trim();
+        const enteredName = window.prompt('Folder name');
+        const name = enteredName ? enteredName.trim() : '';
 
         if (!name) {
-          setLibraryFeedback('Folder name is required.', 'error');
-          newFolderInput.focus();
           return;
         }
 
-        createFolderButton.disabled = true;
-        cancelFolderButton.disabled = true;
+        newFolderButton.disabled = true;
         setLibraryFeedback('Creating folder...', null);
 
-        try {
-          await postJson('/library/folder', {
-            parentPath: currentPath,
-            name,
+        postJson('/library/folder', {
+          parentPath: currentPath,
+          name,
+        })
+          .then((response) => {
+            setLibraryFeedback('Created folder ' + name + '.', null);
+            applyLibraryListing(response);
+          })
+          .catch((error) => {
+            const message = error && error.message ? error.message : 'Unable to create folder.';
+            setPickerState(message);
+            setLibraryFeedback(message, 'error');
+          })
+          .then(() => {
+            newFolderButton.disabled = false;
+          }, () => {
+            newFolderButton.disabled = false;
           });
-          setNewFolderFormVisible(false);
-          setLibraryFeedback('Created folder ' + name + '.', null);
-          await loadLibrary(currentPath);
-        } catch (error) {
-          const message = error && error.message ? error.message : 'Unable to create folder.';
-          setPickerState(message);
-          setLibraryFeedback(message, 'error');
-        } finally {
-          createFolderButton.disabled = false;
-          cancelFolderButton.disabled = false;
-        }
       });
       fileInput.addEventListener('change', () => {
         const fileSpecs = Array.from(fileInput.files || []).map((file) => toFileSpec(file, file.name));
@@ -1051,6 +1017,21 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
             pickFolderButton.disabled = false;
             setPickerState(error.message || 'Upload failed.');
           });
+      });
+
+      window.addEventListener('error', (event) => {
+        const message = (event && event.message) || 'Upload page crashed while loading.';
+        setPickerState(message);
+        setLibraryFeedback(message, 'error');
+        renderLibraryMessage(message, 'error');
+      });
+
+      window.addEventListener('unhandledrejection', (event) => {
+        const reason = event && event.reason;
+        const message = reason && reason.message ? reason.message : 'Upload page request failed.';
+        setPickerState(message);
+        setLibraryFeedback(message, 'error');
+        renderLibraryMessage(message, 'error');
       });
 
       setLibraryFeedback('Loading current folder...', null);
