@@ -648,10 +648,15 @@ export default function App() {
             retryCountsByUri.delete(video.uri);
 
             if (!cancelled) {
-              setThumbnailSourceByUri((current) => ({
-                ...current,
-                [video.uri]: null,
-              }));
+              setThumbnailSourceByUri((current) => {
+                if (current[video.uri] === undefined) {
+                  return current;
+                }
+
+                const next = { ...current };
+                delete next[video.uri];
+                return next;
+              });
             }
           } finally {
             if (shouldReleaseJob) {

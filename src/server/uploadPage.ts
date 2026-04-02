@@ -78,6 +78,17 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         align-items: center;
       }
 
+      .library-toolbar {
+        justify-content: space-between;
+      }
+
+      .library-toolbar-actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-left: auto;
+      }
+
       .button,
       .ghost-button,
       .danger-button,
@@ -101,6 +112,13 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         background: rgba(255, 255, 255, 0.74);
         color: var(--ink);
         border: 1px solid var(--line);
+      }
+
+      .back-button {
+        min-width: 48px;
+        padding: 12px;
+        font-size: 20px;
+        line-height: 1;
       }
 
       .danger-button {
@@ -281,6 +299,11 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         .library-actions {
           justify-content: flex-start;
         }
+
+        .library-toolbar-actions {
+          width: 100%;
+          margin-left: 0;
+        }
       }
     </style>
   </head>
@@ -290,9 +313,11 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         <h2>Library folders</h2>
         <p>Create folders, remove folders, and remove files from your computer. Uploaded files are saved into the folder you are currently viewing.</p>
         <div class="library-toolbar">
-          <button class="ghost-button" id="up-button" type="button">Up</button>
-          <button class="ghost-button" id="refresh-button" type="button">Refresh</button>
-          <button class="button" id="new-folder-button" type="button">New folder</button>
+          <button aria-label="Go back" class="ghost-button back-button" hidden id="up-button" type="button">&#8592;</button>
+          <div class="library-toolbar-actions">
+            <button class="ghost-button" id="refresh-button" type="button">Refresh</button>
+            <button class="button" id="new-folder-button" type="button">New folder</button>
+          </div>
         </div>
         <div class="breadcrumbs" id="breadcrumbs" style="margin-top: 16px;"></div>
         <div class="library-list" id="library-list">
@@ -498,20 +523,15 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       function renderBreadcrumbs() {
         breadcrumbs.innerHTML = '';
-        const homeButton = document.createElement('button');
-        homeButton.className = 'path-button';
-        homeButton.type = 'button';
-        homeButton.textContent = 'Library';
-        homeButton.addEventListener('click', () => {
-          loadLibrary('').catch((error) => setPickerState(error.message || 'Unable to load library.'));
-        });
-        breadcrumbs.append(homeButton);
-
         let accumulatedPath = '';
-        for (const segment of splitPath(currentPath)) {
-          const separator = document.createElement('span');
-          separator.textContent = '/';
-          breadcrumbs.append(separator);
+        const segments = splitPath(currentPath);
+
+        segments.forEach((segment, index) => {
+          if (index > 0) {
+            const separator = document.createElement('span');
+            separator.textContent = '/';
+            breadcrumbs.append(separator);
+          }
 
           accumulatedPath = joinPath(accumulatedPath, segment);
           const button = document.createElement('button');
@@ -522,9 +542,10 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
             loadLibrary(accumulatedPath).catch((error) => setPickerState(error.message || 'Unable to load library.'));
           });
           breadcrumbs.append(button);
-        }
+        });
 
-        upButton.disabled = !currentPath;
+        upButton.hidden = !currentPath;
+        breadcrumbs.hidden = segments.length === 0;
       }
 
       function describeLibraryItem(item) {
