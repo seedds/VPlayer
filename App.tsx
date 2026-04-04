@@ -1,4 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { NavigationContainer, DefaultTheme, useNavigationContainerRef } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createVideoPlayer } from 'expo-video';
 import { StatusBar } from 'expo-status-bar';
 import type { ImageProps } from 'expo-image';
@@ -9,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  FlatList,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,6 +21,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { PlayerScreen } from './src/components/PlayerScreen';
@@ -47,12 +52,21 @@ import {
 } from './src/lib/videoLibrary';
 import { DEFAULT_SERVER_PORT, localUploadServer } from './src/server/localUploadServer';
 
-type ActiveTab = 'library' | 'upload';
 type ButtonTone = 'primary' | 'danger';
 type ThumbnailSource = ImageProps['source'];
 type ThumbnailHydrationJob = {
   cancel: () => void;
   promise: Promise<void>;
+};
+
+type RootStackParamList = {
+  MainTabs: undefined;
+  Player: undefined;
+};
+
+type MainTabParamList = {
+  Library: undefined;
+  Upload: undefined;
 };
 
 const INITIAL_ACTIVITY: UploadActivity = {
@@ -63,6 +77,21 @@ const INITIAL_ACTIVITY: UploadActivity = {
 
 const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
 const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
+
+const RootStack = createNativeStackNavigator<RootStackParamList>();
+const MainTab = createBottomTabNavigator<MainTabParamList>();
+
+const navigationTheme = {
+  ...DefaultTheme,
+  colors: {
+    ...DefaultTheme.colors,
+    background: '#efe7db',
+    border: '#ded1c2',
+    card: '#efe7db',
+    primary: '#1f6f68',
+    text: '#1d1917',
+  },
+};
 
 function getParentPath(path: string | null): string | null {
   if (!path) {
@@ -80,7 +109,6 @@ function getParentPath(path: string | null): string | null {
 
 export default function App() {
   const { width, height } = useWindowDimensions();
-  const [activeTab, setActiveTab] = useState<ActiveTab>('library');
   const [videos, setVideos] = useState<LibraryItem[]>([]);
   const [playbackStateByUri, setPlaybackStateByUri] = useState<PlaybackStateMap>({});
   const [thumbnailSourceByUri, setThumbnailSourceByUri] = useState<Record<string, ThumbnailSource | null | undefined>>({});
@@ -99,6 +127,7 @@ export default function App() {
   const thumbnailSourceByUriRef = useRef<Record<string, ThumbnailSource | null | undefined>>({});
   const thumbnailJobUrisRef = useRef<Set<string>>(new Set());
   const currentFolderPathRef = useRef<string | null>(null);
+  const navigationRef = useNavigationContainerRef<RootStackParamList>();
 
   const isAndroidTablet = useMemo(() => isAndroidTabletLayout(width, height), [height, width]);
   const progress = getUploadProgress(activity);
@@ -474,12 +503,10 @@ export default function App() {
   }, [selectedCount, selectionMode]);
 
   useEffect(() => {
-    if (!selectedVideo) {
-      void ScreenOrientation.lockAsync(
-        isAndroidTablet ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP,
-      );
-    }
-  }, [isAndroidTablet, selectedVideo]);
+    void ScreenOrientation.lockAsync(
+      isAndroidTablet ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP,
+    );
+  }, [isAndroidTablet]);
 
   useEffect(() => {
     let isMounted = true;
@@ -570,9 +597,13 @@ export default function App() {
 
       if (index >= 0) {
         setSelectedIndex(index);
+
+        if (navigationRef.isReady()) {
+          navigationRef.navigate('Player');
+        }
       }
     },
-    [videoItems],
+    [navigationRef, videoItems],
   );
 
   const handleCancelSelection = useCallback(() => {
@@ -671,12 +702,6 @@ export default function App() {
   }, [getCleanupVideos, handleCancelSelection, refreshLibrary, selectedVideoUris, videos]);
 
   useEffect(() => {
-    if (!loading && activeTab === 'library') {
-      void refreshLibrary();
-    }
-  }, [activeTab, loading, refreshLibrary]);
-
-  useEffect(() => {
     if (loading) {
       return;
     }
@@ -729,33 +754,29 @@ export default function App() {
   }, [libraryRevision, loading, startThumbnailHydration]);
 
   useEffect(() => {
-    if (!loading && activeTab === 'upload') {
-      if (selectionMode) {
-        setSelectionMode(false);
-        setSelectedVideoUris(new Set());
-      }
-
-      void refreshNetwork();
-    }
-  }, [activeTab, loading, refreshNetwork, selectionMode]);
-
-  useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState !== 'active') {
         return;
       }
 
       void refreshLibrary();
-
-      if (activeTab === 'upload') {
-        void refreshNetwork();
-      }
+      void refreshNetwork();
     });
 
     return () => {
       subscription.remove();
     };
-  }, [activeTab, refreshLibrary, refreshNetwork]);
+  }, [refreshLibrary, refreshNetwork]);
+
+  useEffect(() => {
+    if (selectedIndex === null || selectedVideo || !navigationRef.isReady()) {
+      return;
+    }
+
+    if (navigationRef.canGoBack()) {
+      navigationRef.goBack();
+    }
+  }, [navigationRef, selectedIndex, selectedVideo]);
 
   useEffect(() => {
     if (!serverRunning || ipAddress || loading) {
@@ -771,127 +792,179 @@ export default function App() {
     };
   }, [ipAddress, loading, refreshNetwork, serverRunning]);
 
-  if (selectedVideo && selectedIndex !== null) {
-    return (
-      <SafeAreaProvider>
-        <PlayerScreen
-          currentIndex={selectedIndex}
-          exitOrientationLock={
-            isAndroidTablet ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP
-          }
-          videos={videoItems}
-          onClose={() => {
-            setSelectedIndex(null);
-            void refreshLibrary();
-          }}
-          onSelectIndex={setSelectedIndex}
-        />
-      </SafeAreaProvider>
-    );
-  }
-
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
+      <GestureHandlerRootView style={styles.root}>
         {shouldKeepAwakeForUpload ? <UploadWakeLock /> : null}
         <StatusBar style="dark" />
-        <View style={styles.screen}>
-          <View style={styles.contentArea}>
-            {loading ? (
-              <View style={styles.loadingCard}>
-                <ActivityIndicator size="large" color="#1f6f68" />
-                <Text style={styles.loadingText}>Preparing storage, network, and local upload server...</Text>
-              </View>
-            ) : activeTab === 'library' ? (
-              <LibraryView
-                currentFolderPath={currentFolderPath}
-                onClearPlayback={() => {
-                  Alert.alert('Clear playback history?', 'This resets all saved playback positions and marks every video as new.', [
-                    {
-                      text: 'Cancel',
-                      style: 'cancel',
-                    },
-                    {
-                      text: 'Clear',
-                      style: 'destructive',
-                      onPress: () => {
-                        void (async () => {
-                          try {
-                            await clearAllPlaybackProgress();
-                            await refreshLibrary();
-                          } catch (error) {
-                            Alert.alert('Clear failed', error instanceof Error ? error.message : 'Could not clear playback history.');
-                          }
-                        })();
+        <NavigationContainer ref={navigationRef} theme={navigationTheme}>
+          <RootStack.Navigator screenOptions={{ headerShown: false }}>
+            <RootStack.Screen name="MainTabs">
+              {() => (
+                <MainTab.Navigator
+                  screenOptions={{
+                    headerShown: false,
+                    sceneStyle: styles.tabScene,
+                    tabBarActiveTintColor: '#1f6f68',
+                    tabBarInactiveTintColor: '#4f463f',
+                    tabBarHideOnKeyboard: true,
+                    tabBarStyle: styles.tabBar,
+                    tabBarLabelStyle: styles.tabBarLabel,
+                  }}
+                >
+                  <MainTab.Screen
+                    name="Library"
+                    listeners={{
+                      focus: () => {
+                        if (!loading) {
+                          void refreshLibrary();
+                        }
                       },
-                    },
-                  ]);
-                }}
-                playbackStateByUri={playbackStateByUri}
-                selectedCount={selectedCount}
-                selectedVideoUris={selectedVideoUris}
-                selectionMode={selectionMode}
-                thumbnailSourceByUri={thumbnailSourceByUri}
-                onCancelSelection={handleCancelSelection}
-                onClearSelectedPlayback={handleClearSelectedPlayback}
-                onDeleteSelected={handleDeleteSelected}
-                onNavigateUp={() => {
-                  handleCancelSelection();
-                  void refreshLibrary(getParentPath(currentFolderPath));
-                }}
-                onOpenFolder={(path) => {
-                  handleCancelSelection();
-                  void refreshLibrary(path);
-                }}
-                videos={videos}
-                onDeleteVideo={handleDeleteVideo}
-                onLongPressVideo={(video) => {
-                  setSelectionMode(true);
-                  setSelectedVideoUris(new Set([video.uri]));
-                }}
-                onPlayVideo={handlePlayVideo}
-                onToggleVideoSelection={(video) => {
-                  setSelectedVideoUris((current) => {
-                    const next = new Set(current);
+                    }}
+                  >
+                    {() => (
+                      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+                        <View style={styles.screen}>
+                          <View style={styles.contentArea}>
+                            {loading ? (
+                              <View style={styles.loadingCard}>
+                                <ActivityIndicator size="large" color="#1f6f68" />
+                                <Text style={styles.loadingText}>Preparing storage, network, and local upload server...</Text>
+                              </View>
+                            ) : (
+                              <LibraryView
+                                currentFolderPath={currentFolderPath}
+                                onClearPlayback={() => {
+                                  Alert.alert('Clear playback history?', 'This resets all saved playback positions and marks every video as new.', [
+                                    {
+                                      text: 'Cancel',
+                                      style: 'cancel',
+                                    },
+                                    {
+                                      text: 'Clear',
+                                      style: 'destructive',
+                                      onPress: () => {
+                                        void (async () => {
+                                          try {
+                                            await clearAllPlaybackProgress();
+                                            await refreshLibrary();
+                                          } catch (error) {
+                                            Alert.alert('Clear failed', error instanceof Error ? error.message : 'Could not clear playback history.');
+                                          }
+                                        })();
+                                      },
+                                    },
+                                  ]);
+                                }}
+                                playbackStateByUri={playbackStateByUri}
+                                selectedCount={selectedCount}
+                                selectedVideoUris={selectedVideoUris}
+                                selectionMode={selectionMode}
+                                thumbnailSourceByUri={thumbnailSourceByUri}
+                                onCancelSelection={handleCancelSelection}
+                                onClearSelectedPlayback={handleClearSelectedPlayback}
+                                onDeleteSelected={handleDeleteSelected}
+                                onNavigateUp={() => {
+                                  handleCancelSelection();
+                                  void refreshLibrary(getParentPath(currentFolderPath));
+                                }}
+                                onOpenFolder={(path) => {
+                                  handleCancelSelection();
+                                  void refreshLibrary(path);
+                                }}
+                                videos={videos}
+                                onDeleteVideo={handleDeleteVideo}
+                                onLongPressVideo={(video) => {
+                                  setSelectionMode(true);
+                                  setSelectedVideoUris(new Set([video.uri]));
+                                }}
+                                onPlayVideo={handlePlayVideo}
+                                onToggleVideoSelection={(video) => {
+                                  setSelectedVideoUris((current) => {
+                                    const next = new Set(current);
 
-                    if (next.has(video.uri)) {
-                      next.delete(video.uri);
-                    } else {
-                      next.add(video.uri);
-                    }
+                                    if (next.has(video.uri)) {
+                                      next.delete(video.uri);
+                                    } else {
+                                      next.add(video.uri);
+                                    }
 
-                    return next;
-                  });
-                }}
-              />
-            ) : (
-              <UploadView
-                activity={activity}
-                onRestartServer={() => void startServer(normalizePort(portInput, DEFAULT_SERVER_PORT))}
-                onStopServer={() => void stopServer()}
-                portInput={portInput}
-                progress={progress}
-                serverRunning={serverRunning}
-                serverUrl={serverUrl}
-                setPortInput={setPortInput}
-              />
-            )}
-          </View>
-
-          <View style={styles.bottomTabBar}>
-            <BottomTabButton active={activeTab === 'library'} label="Library" onPress={() => setActiveTab('library')} />
-            <BottomTabButton
-              active={activeTab === 'upload'}
-              label="Upload"
-              onPress={() => {
-                setSelectionMode(false);
-                setSelectedVideoUris(new Set());
-                setActiveTab('upload');
+                                    return next;
+                                  });
+                                }}
+                              />
+                            )}
+                          </View>
+                        </View>
+                      </SafeAreaView>
+                    )}
+                  </MainTab.Screen>
+                  <MainTab.Screen
+                    name="Upload"
+                    listeners={{
+                      focus: () => {
+                        handleCancelSelection();
+                        void refreshNetwork();
+                      },
+                    }}
+                  >
+                    {() => (
+                      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+                        <View style={styles.screen}>
+                          <View style={styles.contentArea}>
+                            {loading ? (
+                              <View style={styles.loadingCard}>
+                                <ActivityIndicator size="large" color="#1f6f68" />
+                                <Text style={styles.loadingText}>Preparing storage, network, and local upload server...</Text>
+                              </View>
+                            ) : (
+                              <UploadView
+                                activity={activity}
+                                onRestartServer={() => void startServer(normalizePort(portInput, DEFAULT_SERVER_PORT))}
+                                onStopServer={() => void stopServer()}
+                                portInput={portInput}
+                                progress={progress}
+                                serverRunning={serverRunning}
+                                serverUrl={serverUrl}
+                                setPortInput={setPortInput}
+                              />
+                            )}
+                          </View>
+                        </View>
+                      </SafeAreaView>
+                    )}
+                  </MainTab.Screen>
+                </MainTab.Navigator>
+              )}
+            </RootStack.Screen>
+            <RootStack.Screen
+              name="Player"
+              listeners={{
+                beforeRemove: () => {
+                  setSelectedIndex(null);
+                  void refreshLibrary();
+                },
               }}
-            />
-          </View>
-        </View>
-      </SafeAreaView>
+            >
+              {({ navigation }) =>
+                selectedVideo && selectedIndex !== null ? (
+                  <PlayerScreen
+                    currentIndex={selectedIndex}
+                    exitOrientationLock={
+                      isAndroidTablet ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP
+                    }
+                    videos={videoItems}
+                    onClose={() => {
+                      navigation.goBack();
+                    }}
+                    onSelectIndex={setSelectedIndex}
+                  />
+                ) : null
+              }
+            </RootStack.Screen>
+          </RootStack.Navigator>
+        </NavigationContainer>
+      </GestureHandlerRootView>
     </SafeAreaProvider>
   );
 }
@@ -941,6 +1014,56 @@ function LibraryView({
   onPlayVideo,
   onToggleVideoSelection,
 }: LibraryViewProps) {
+  const renderItem = useCallback(
+    ({ item: video }: { item: LibraryItem }) => (
+      <VideoCard
+        durationSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.durationSeconds : undefined}
+        isNew={video.kind === 'video' ? playbackStateByUri[video.uri]?.hasStartedPlayback !== true : false}
+        selected={selectedVideoUris.has(video.uri)}
+        selectionMode={selectionMode}
+        savedPositionSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.positionSeconds ?? 0 : undefined}
+        thumbnailSource={video.kind === 'video' ? thumbnailSourceByUri[video.uri] : undefined}
+        video={video}
+        onLongPress={() => {
+          if (selectionMode) {
+            onToggleVideoSelection(video);
+            return;
+          }
+
+          onLongPressVideo(video);
+        }}
+        onDelete={() => onDeleteVideo(video)}
+        onPlay={() => {
+          if (selectionMode) {
+            onToggleVideoSelection(video);
+            return;
+          }
+
+          if (video.kind !== 'video') {
+            if (video.kind === 'folder') {
+              onOpenFolder(video.relativePath);
+            }
+
+            return;
+          }
+
+          onPlayVideo(video.uri);
+        }}
+      />
+    ),
+    [
+      onDeleteVideo,
+      onLongPressVideo,
+      onOpenFolder,
+      onPlayVideo,
+      onToggleVideoSelection,
+      playbackStateByUri,
+      selectedVideoUris,
+      selectionMode,
+      thumbnailSourceByUri,
+    ],
+  );
+
   return (
     <View style={styles.libraryWrap}>
       <View style={styles.libraryToolbar}>
@@ -974,8 +1097,14 @@ function LibraryView({
         )}
       </View>
 
-      <ScrollView contentContainerStyle={styles.libraryList} showsVerticalScrollIndicator={false}>
-        {videos.length === 0 ? (
+      <FlatList
+        contentContainerStyle={[styles.libraryList, videos.length === 0 && styles.libraryListEmpty]}
+        data={videos}
+        keyExtractor={(item) => item.id}
+        keyboardShouldPersistTaps="handled"
+        renderItem={renderItem}
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateTitle}>{currentFolderPath ? 'This folder is empty' : 'No media yet'}</Text>
             <Text style={styles.emptyStateText}>
@@ -984,45 +1113,8 @@ function LibraryView({
                 : 'Use the Upload tab at the bottom, open the device URL on your computer, and send a file here.'}
             </Text>
           </View>
-        ) : null}
-        {videos.map((video) => (
-          <VideoCard
-            key={video.id}
-            durationSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.durationSeconds : undefined}
-            isNew={video.kind === 'video' ? playbackStateByUri[video.uri]?.hasStartedPlayback !== true : false}
-            selected={selectedVideoUris.has(video.uri)}
-            selectionMode={selectionMode}
-            savedPositionSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.positionSeconds ?? 0 : undefined}
-            thumbnailSource={video.kind === 'video' ? thumbnailSourceByUri[video.uri] : undefined}
-            video={video}
-            onLongPress={() => {
-              if (selectionMode) {
-                onToggleVideoSelection(video);
-                return;
-              }
-
-              onLongPressVideo(video);
-            }}
-            onDelete={() => onDeleteVideo(video)}
-            onPlay={() => {
-              if (selectionMode) {
-                onToggleVideoSelection(video);
-                return;
-              }
-
-              if (video.kind !== 'video') {
-                if (video.kind === 'folder') {
-                  onOpenFolder(video.relativePath);
-                }
-
-                return;
-              }
-
-              onPlayVideo(video.uri);
-            }}
-          />
-        ))}
-      </ScrollView>
+        }
+      />
     </View>
   );
 }
@@ -1116,20 +1208,6 @@ function Panel({ children, subtitle, title }: PanelProps) {
   );
 }
 
-type BottomTabButtonProps = {
-  active: boolean;
-  label: string;
-  onPress: () => void;
-};
-
-function BottomTabButton({ active, label, onPress }: BottomTabButtonProps) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.bottomTabButton, active && styles.bottomTabButtonActive, pressed && styles.bottomTabButtonPressed]}>
-      <Text style={[styles.bottomTabText, active && styles.bottomTabTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 type ActionButtonProps = {
   disabled?: boolean;
   label: string;
@@ -1155,9 +1233,23 @@ function ActionButton({ disabled = false, label, onPress, tone }: ActionButtonPr
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: '#efe7db',
+  },
+  tabScene: {
+    backgroundColor: '#efe7db',
+  },
+  tabBar: {
+    backgroundColor: '#efe7db',
+    borderTopColor: '#ded1c2',
+  },
+  tabBarLabel: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   screen: {
     flex: 1,
@@ -1219,6 +1311,9 @@ const styles = StyleSheet.create({
   libraryList: {
     gap: 0,
     paddingBottom: 12,
+  },
+  libraryListEmpty: {
+    flexGrow: 1,
   },
   clearPlaybackButton: {
     borderRadius: 14,
@@ -1408,36 +1503,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
-  },
-  bottomTabBar: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 10,
-    backgroundColor: '#efe7db',
-    borderTopWidth: 1,
-    borderTopColor: '#ded1c2',
-  },
-  bottomTabButton: {
-    flex: 1,
-    borderRadius: 18,
-    paddingVertical: 12,
-    alignItems: 'center',
-    backgroundColor: '#e3d7ca',
-  },
-  bottomTabButtonActive: {
-    backgroundColor: '#1f6f68',
-  },
-  bottomTabButtonPressed: {
-    opacity: 0.82,
-  },
-  bottomTabText: {
-    color: '#4f463f',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  bottomTabTextActive: {
-    color: '#f8f3ee',
   },
 });
