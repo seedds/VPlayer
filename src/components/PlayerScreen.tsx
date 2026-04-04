@@ -37,8 +37,7 @@ const BACKGROUND_DOUBLE_TAP_DELAY_MS = 250;
 const SCRUB_PREVIEW_DEDUPE_THRESHOLD_SECONDS = 0.05;
 const SCRUB_PREVIEW_POPUP_WIDTH = 160;
 const SCRUB_PREVIEW_POPUP_HEIGHT = 90;
-const RESUME_NEAR_END_THRESHOLD_SECONDS = 0.25;
-const RESUME_END_PADDING_SECONDS = 1;
+const RESUME_NEAR_END_THRESHOLD_SECONDS = 10;
 const PLAYBACK_RATE_STEP = 0.1;
 const MIN_PLAYBACK_RATE = 0.1;
 const MAX_PLAYBACK_RATE = 16;
@@ -57,12 +56,13 @@ function getResumePosition(savedPosition: number, duration: number): number {
   }
 
   const clampedPosition = Math.max(0, Math.min(savedPosition, duration));
+  const remainingTime = duration - clampedPosition;
 
-  if (clampedPosition < duration - RESUME_NEAR_END_THRESHOLD_SECONDS) {
+  if (remainingTime >= RESUME_NEAR_END_THRESHOLD_SECONDS) {
     return clampedPosition;
   }
 
-  return Math.max(duration - Math.min(RESUME_END_PADDING_SECONDS, duration / 2), 0);
+  return Math.max(duration - RESUME_NEAR_END_THRESHOLD_SECONDS, 0);
 }
 
 export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSelectIndex, videos }: PlayerScreenProps) {
