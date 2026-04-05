@@ -187,17 +187,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    borderRadius: 20,
-    backgroundColor: '#fff9f2',
-    borderWidth: 1,
-    borderColor: '#ead8c4',
-    padding: 6,
+    width: '100%',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddcfbf',
   },
   cardPressed: {
-    backgroundColor: '#f4e7da',
+    backgroundColor: '#e6ddd2',
   },
   cardSelected: {
-    borderColor: '#1f6f68',
     backgroundColor: '#eef7f5',
   },
   primaryAction: {
@@ -205,9 +204,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    borderRadius: 16,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
   },
   thumbnailWrap: {
     width: 54,

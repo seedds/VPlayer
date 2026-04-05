@@ -825,9 +825,9 @@ export default function App() {
                     {() => (
                       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
                         <View style={styles.screen}>
-                          <View style={styles.contentArea}>
+                          <View style={styles.libraryContentArea}>
                             {loading ? (
-                              <View style={styles.loadingCard}>
+                              <View style={[styles.loadingCard, styles.libraryLoadingCard]}>
                                 <ActivityIndicator size="large" color="#1f6f68" />
                                 <Text style={styles.loadingText}>Preparing storage, network, and local upload server...</Text>
                               </View>
@@ -1260,6 +1260,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
   },
+  libraryContentArea: {
+    flex: 1,
+    paddingTop: 12,
+  },
   loadingCard: {
     flex: 1,
     borderRadius: 24,
@@ -1268,6 +1272,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#fff8f1',
     gap: 16,
+  },
+  libraryLoadingCard: {
+    marginHorizontal: 16,
   },
   loadingText: {
     color: '#62574e',
@@ -1282,6 +1289,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 16,
     paddingBottom: 8,
     gap: 10,
   },
