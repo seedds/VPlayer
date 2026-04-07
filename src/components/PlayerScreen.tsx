@@ -42,6 +42,10 @@ const PLAYBACK_RATE_STEP = 0.1;
 const MIN_PLAYBACK_RATE = 0.1;
 const MAX_PLAYBACK_RATE = 16;
 
+function formatClockTime(value: Date): string {
+  return `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
+}
+
 type PendingResumeState = {
   savedPosition: number;
   shouldAutoplay: boolean;
@@ -82,6 +86,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const [currentClockTime, setCurrentClockTime] = useState(() => formatClockTime(new Date()));
   const [scrubPreviewSource, setScrubPreviewSource] = useState<ImageProps['source'] | null>(null);
   const [scrubTime, setScrubTime] = useState(0);
   const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
@@ -128,6 +133,16 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   useEffect(() => {
     subtitleCuesRef.current = subtitleCues;
   }, [subtitleCues]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setCurrentClockTime(formatClockTime(new Date()));
+    }, 1000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, []);
 
   const persistPosition = (uri: string, positionSeconds: number, force = false) => {
     if (!force && Math.abs(positionSeconds - lastPersistedPositionRef.current) < 2) {
@@ -750,7 +765,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
               <View style={styles.titleWrap}>
                 <Text numberOfLines={1} style={styles.fileName}>
-                  {video.name}
+                  {currentClockTime}
                 </Text>
               </View>
 
@@ -837,6 +852,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
                   </View>
                   <View pointerEvents="none" style={styles.seekBarLabelRow}>
                     <Text style={styles.seekBarTimeText}>{formatDuration(displayedTime)}</Text>
+                    <View style={styles.seekBarFileNameWrap}>
+                      <Text numberOfLines={1} style={styles.seekBarFileNameText}>
+                        {video.name}
+                      </Text>
+                    </View>
                     <Text style={styles.seekBarTimeText}>-{formatDuration(remainingTime)}</Text>
                   </View>
                 </View>
@@ -1127,5 +1147,17 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '700',
+  },
+  seekBarFileNameWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 78,
+  },
+  seekBarFileNameText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });
