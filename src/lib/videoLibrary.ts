@@ -298,6 +298,101 @@ export async function createLibraryFolder(parentPath: string | null, name: strin
   return folder;
 }
 
+export async function renameLibraryItem(
+  relativePath: string,
+  entryType: 'file' | 'folder',
+  newName: string,
+): Promise<LibraryItem> {
+  await ensureAppDirectories();
+
+  const target = await getLibraryItem(relativePath, entryType);
+
+  if (!target) {
+    throw new Error('Library item not found.');
+  }
+
+  const sanitizedName = entryType === 'folder' ? sanitizeFolderName(newName) : sanitizeFileName(newName);
+  const nextRelativePath = joinRelativePath(target.parentPath, sanitizedName);
+
+  if (nextRelativePath === target.relativePath) {
+    return target;
+  }
+
+  const nextUri = getItemUri(nextRelativePath);
+  const nextInfo = await FileSystem.getInfoAsync(nextUri);
+
+  if (nextInfo.exists) {
+    throw new Error('A file or folder with that name already exists.');
+  }
+
+  await FileSystem.moveAsync({
+    from: target.uri,
+    to: nextUri,
+  });
+
+  const renamed = await buildLibraryItem(nextRelativePath);
+
+  if (!renamed) {
+    throw new Error('Could not rename the item.');
+  }
+
+  return renamed;
+}
+
+export async function moveLibraryItem(
+  relativePath: string,
+  entryType: 'file' | 'folder',
+  destinationParentPath: string | null,
+): Promise<LibraryItem> {
+  await ensureAppDirectories();
+
+  const target = await getLibraryItem(relativePath, entryType);
+
+  if (!target) {
+    throw new Error('Library item not found.');
+  }
+
+  const destinationParent = normalizeLibraryDirectoryPath(destinationParentPath);
+
+  if (target.parentPath === (destinationParent || null)) {
+    return target;
+  }
+
+  if (target.kind === 'folder') {
+    if (destinationParent === target.relativePath || destinationParent.startsWith(`${target.relativePath}/`)) {
+      throw new Error('A folder cannot be moved into itself.');
+    }
+  }
+
+  const destinationDirectory = getDirectoryUri(destinationParent || null);
+  const destinationInfo = await FileSystem.getInfoAsync(destinationDirectory);
+
+  if (!destinationInfo.exists || !destinationInfo.isDirectory) {
+    throw new Error('Destination folder not found.');
+  }
+
+  const nextRelativePath = joinRelativePath(destinationParent || null, target.name);
+  const nextUri = getItemUri(nextRelativePath);
+  const nextInfo = await FileSystem.getInfoAsync(nextUri);
+
+  if (nextInfo.exists) {
+    throw new Error('A file or folder with that name already exists in the destination.');
+  }
+
+  await FileSystem.moveAsync({
+    from: target.uri,
+    to: nextUri,
+  });
+
+  const moved = await buildLibraryItem(nextRelativePath);
+
+  if (!moved) {
+    throw new Error('Could not move the item.');
+  }
+
+  return moved;
+}
+
 export async function findMatchingSubtitleUri(video: VideoItem): Promise<string | null> {
   await ensureAppDirectories();
 

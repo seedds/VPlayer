@@ -84,6 +84,59 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         justify-content: space-between;
       }
 
+      .breadcrumb,
+      .library-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
+
+      .breadcrumb {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .breadcrumb-button {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.68);
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 6px 10px;
+      }
+
+      .breadcrumb-separator {
+        color: rgba(111, 101, 92, 0.68);
+      }
+
+      .library-controls {
+        justify-content: space-between;
+      }
+
+      .library-search,
+      .library-sort {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.74);
+        color: var(--ink);
+        font: inherit;
+        min-height: 38px;
+        padding: 8px 12px;
+      }
+
+      .library-search {
+        flex: 1 1 260px;
+        min-width: 0;
+      }
+
+      .library-sort {
+        flex: 0 0 170px;
+      }
+
       .library-toolbar-actions {
         display: flex;
         gap: 6px;
@@ -178,7 +231,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       .library-table-head,
       .library-row {
         display: grid;
-        grid-template-columns: 34px minmax(0, 1fr) 110px 150px;
+        grid-template-columns: 34px minmax(0, 1fr) 110px 150px 120px;
         gap: 10px;
         align-items: center;
       }
@@ -283,6 +336,22 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         color: var(--muted);
       }
 
+      .library-actions {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .row-button {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.74);
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 6px 10px;
+      }
+
       .library-feedback {
         margin-top: 6px;
         min-height: 14px;
@@ -292,9 +361,11 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       .library-footer {
         margin-top: 10px;
         display: flex;
+        gap: 8px;
         justify-content: flex-start;
       }
 
+      .library-footer .ghost-button,
       .library-footer .danger-button {
         padding: 7px 12px;
         font-size: 12px;
@@ -392,7 +463,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
         .library-table-head,
         .library-row {
-          grid-template-columns: 28px minmax(0, 1fr) 82px;
+          grid-template-columns: 28px minmax(0, 1fr) 82px 86px;
         }
 
         .library-date,
@@ -418,11 +489,22 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
             <button class="button" id="new-folder-button" type="button">New folder</button>
           </div>
         </div>
+        <div class="breadcrumb" id="breadcrumb"></div>
+        <div class="library-controls">
+          <input class="library-search" id="library-search" placeholder="Search current folder" type="search" />
+          <select class="library-sort" id="library-sort" aria-label="Sort library">
+            <option value="name">Sort by name</option>
+            <option value="modified">Sort by modified</option>
+            <option value="size">Sort by size</option>
+            <option value="type">Sort by type</option>
+          </select>
+        </div>
         <div class="library-feedback empty" id="library-feedback"></div>
         <div class="library-list" id="library-list">
           <div class="empty">Loading library...</div>
         </div>
         <div class="library-footer">
+          <button class="ghost-button" disabled id="move-selected-button" type="button">Move</button>
           <button class="danger-button" disabled id="delete-selected-button" type="button">Delete</button>
         </div>
       </section>
@@ -465,6 +547,10 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       const batchSpeed = document.getElementById('batch-speed');
       const libraryList = document.getElementById('library-list');
       const libraryFeedback = document.getElementById('library-feedback');
+      const breadcrumb = document.getElementById('breadcrumb');
+      const librarySearch = document.getElementById('library-search');
+      const librarySort = document.getElementById('library-sort');
+      const moveSelectedButton = document.getElementById('move-selected-button');
       const deleteSelectedButton = document.getElementById('delete-selected-button');
       const upButton = document.getElementById('up-button');
       const refreshButton = document.getElementById('refresh-button');
@@ -473,7 +559,10 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       let currentPath = '';
       let currentLibraryItems = [];
       let selectedLibraryPaths = new Set();
+      let librarySearchTerm = '';
+      let librarySortKey = 'name';
       let deletingSelection = false;
+      let movingSelection = false;
       let dragDepth = 0;
       let totalFilesInBatch = 0;
       let completedFilesInBatch = 0;
@@ -547,9 +636,11 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         return new Date(timestamp).toDateString();
       }
 
-      function updateDeleteSelectedButton() {
+      function updateSelectionButtons() {
         const count = selectedLibraryPaths.size;
-        deleteSelectedButton.disabled = deletingSelection || count === 0;
+        moveSelectedButton.disabled = deletingSelection || movingSelection || count === 0;
+        moveSelectedButton.textContent = count > 0 ? 'Move (' + count + ')' : 'Move';
+        deleteSelectedButton.disabled = deletingSelection || movingSelection || count === 0;
         deleteSelectedButton.textContent = count > 0 ? 'Delete (' + count + ')' : 'Delete';
       }
 
@@ -561,7 +652,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           selectedLibraryPaths = new Set(Array.from(selectedLibraryPaths).filter((path) => availablePaths.has(path)));
         }
 
-        updateDeleteSelectedButton();
+        updateSelectionButtons();
       }
 
       function setLibraryItemSelected(relativePath, checked) {
@@ -571,7 +662,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           selectedLibraryPaths.delete(relativePath);
         }
 
-        updateDeleteSelectedButton();
+        updateSelectionButtons();
       }
 
       function updateBatchStatus(speedBytesPerSecond) {
@@ -708,23 +799,155 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         return formatBytes(item.size);
       }
 
-      function renderLibrary(items) {
+      function getEntryType(item) {
+        return item.kind === 'folder' ? 'folder' : 'file';
+      }
+
+      function getVisibleLibraryItems() {
+        const search = librarySearchTerm.trim().toLowerCase();
+        const items = search
+          ? currentLibraryItems.filter((item) => item.name.toLowerCase().indexOf(search) !== -1)
+          : currentLibraryItems.slice();
+
+        return items.sort((left, right) => {
+          if (left.kind === 'folder' && right.kind !== 'folder') {
+            return -1;
+          }
+
+          if (left.kind !== 'folder' && right.kind === 'folder') {
+            return 1;
+          }
+
+          if (librarySortKey === 'modified') {
+            return right.modified - left.modified || left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
+          }
+
+          if (librarySortKey === 'size') {
+            return (right.size || 0) - (left.size || 0) || left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
+          }
+
+          if (librarySortKey === 'type') {
+            return left.kind.localeCompare(right.kind) || left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
+          }
+
+          return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
+        });
+      }
+
+      function renderBreadcrumb() {
+        breadcrumb.innerHTML = '';
+        const segments = splitPath(currentPath);
+        const entries = [{ label: 'Root', path: '' }];
+
+        segments.forEach((segment, index) => {
+          entries.push({
+            label: segment,
+            path: segments.slice(0, index + 1).join('/'),
+          });
+        });
+
+        entries.forEach((entry, index) => {
+          if (index > 0) {
+            const separator = document.createElement('span');
+            separator.className = 'breadcrumb-separator';
+            separator.textContent = '/';
+            breadcrumb.append(separator);
+          }
+
+          const button = document.createElement('button');
+          button.className = 'breadcrumb-button';
+          button.type = 'button';
+          button.textContent = entry.label;
+          button.disabled = entry.path === currentPath;
+          button.addEventListener('click', () => {
+            loadLibrary(entry.path).catch((error) => {
+              const message = error && error.message ? error.message : 'Unable to load folder.';
+              setPickerState(message);
+              setLibraryFeedback(message, 'error');
+              renderLibraryMessage(message, 'error');
+            });
+          });
+          breadcrumb.append(button);
+        });
+      }
+
+      async function requestRename(item) {
+        const enteredName = window.prompt('Rename item', item.name);
+        const name = enteredName ? enteredName.trim() : '';
+
+        if (!name || name === item.name) {
+          return;
+        }
+
+        setLibraryFeedback('Renaming ' + item.name + '...', null);
+
+        try {
+          const response = await postJson('/library/rename', {
+            relativePath: item.relativePath,
+            entryType: getEntryType(item),
+            currentPath,
+            name,
+          });
+          applyLibraryListing(response);
+          setLibraryFeedback('Renamed to ' + response.item.name + '.', null);
+        } catch (error) {
+          const message = error && error.message ? error.message : 'Rename failed.';
+          setPickerState(message);
+          setLibraryFeedback(message, 'error');
+        }
+      }
+
+      function renderLibrary() {
         libraryList.innerHTML = '';
+        renderBreadcrumb();
+        const items = getVisibleLibraryItems();
+
+        if (!currentLibraryItems.length) {
+          renderLibraryMessage('This folder is empty.');
+          updateSelectionButtons();
+          return;
+        }
 
         if (!items.length) {
-          renderLibraryMessage('This folder is empty.');
-          updateDeleteSelectedButton();
+          renderLibraryMessage('No items match your search.');
+          updateSelectionButtons();
           return;
         }
 
         const head = document.createElement('div');
         head.className = 'library-table-head';
-        head.innerHTML = [
-          '<span></span>',
-          '<span>Name</span>',
-          '<span>Type/Size</span>',
-          '<span class="library-head-date">Modified</span>',
-        ].join('');
+
+        const selectAllWrap = document.createElement('span');
+        const selectAll = document.createElement('input');
+        selectAll.className = 'library-checkbox';
+        selectAll.type = 'checkbox';
+        const visibleSelectedCount = items.filter((item) => selectedLibraryPaths.has(item.relativePath)).length;
+        selectAll.checked = visibleSelectedCount === items.length;
+        selectAll.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < items.length;
+        selectAll.addEventListener('change', () => {
+          for (const item of items) {
+            if (selectAll.checked) {
+              selectedLibraryPaths.add(item.relativePath);
+            } else {
+              selectedLibraryPaths.delete(item.relativePath);
+            }
+          }
+
+          updateSelectionButtons();
+          renderLibrary();
+        });
+        selectAllWrap.append(selectAll);
+
+        const nameHead = document.createElement('span');
+        nameHead.textContent = 'Name';
+        const kindHead = document.createElement('span');
+        kindHead.textContent = 'Type/Size';
+        const dateHead = document.createElement('span');
+        dateHead.className = 'library-head-date';
+        dateHead.textContent = 'Modified';
+        const actionHead = document.createElement('span');
+        actionHead.textContent = 'Actions';
+        head.append(selectAllWrap, nameHead, kindHead, dateHead, actionHead);
         libraryList.append(head);
 
         for (const item of items) {
@@ -746,7 +969,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           });
           checkbox.addEventListener('change', () => {
             setLibraryItemSelected(item.relativePath, checkbox.checked);
-            row.classList.toggle('selected-item', checkbox.checked);
+            renderLibrary();
           });
           selectWrap.append(checkbox);
 
@@ -762,6 +985,18 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           date.className = 'library-date';
           date.textContent = formatDate(item.modified);
 
+          const actions = document.createElement('span');
+          actions.className = 'library-actions';
+          const renameButton = document.createElement('button');
+          renameButton.className = 'row-button';
+          renameButton.type = 'button';
+          renameButton.textContent = 'Rename';
+          renameButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            requestRename(item);
+          });
+          actions.append(renameButton);
+
           if (item.kind === 'folder') {
             row.classList.add('folder-item');
             row.addEventListener('click', () => {
@@ -775,19 +1010,19 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           }
 
           row.classList.toggle('selected-item', checkbox.checked);
-          top.append(selectWrap, title, kind, date);
+          top.append(selectWrap, title, kind, date, actions);
           row.append(top);
           libraryList.append(row);
         }
 
-        updateDeleteSelectedButton();
+        updateSelectionButtons();
       }
 
       async function loadLibrary(path) {
         renderLibraryMessage('Loading library...');
         currentLibraryItems = [];
         selectedLibraryPaths = new Set();
-        updateDeleteSelectedButton();
+        updateSelectionButtons();
         const query = path ? '?path=' + encodeURIComponent(path) : '';
         const response = await getJson('/library/list' + query);
         applyLibraryListing(response);
@@ -966,6 +1201,14 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
 
       pickButton.addEventListener('click', () => fileInput.click());
       pickFolderButton.addEventListener('click', () => folderInput.click());
+      librarySearch.addEventListener('input', () => {
+        librarySearchTerm = librarySearch.value || '';
+        renderLibrary();
+      });
+      librarySort.addEventListener('change', () => {
+        librarySortKey = librarySort.value || 'name';
+        renderLibrary();
+      });
       refreshButton.addEventListener('click', () => {
         loadLibrary(currentPath).catch((error) => {
           const message = error && error.message ? error.message : 'Unable to load library.';
@@ -1012,6 +1255,48 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
             newFolderButton.disabled = false;
           });
       });
+      moveSelectedButton.addEventListener('click', async () => {
+        const selectedItems = currentLibraryItems.filter((item) => selectedLibraryPaths.has(item.relativePath));
+
+        if (!selectedItems.length) {
+          return;
+        }
+
+        const enteredPath = window.prompt('Move to folder path. Leave empty for root.', currentPath);
+
+        if (enteredPath === null) {
+          return;
+        }
+
+        const destinationPath = enteredPath.trim().replace(/^\/+|\/+$/g, '');
+        movingSelection = true;
+        updateSelectionButtons();
+        setLibraryFeedback('Moving selected items...', null);
+
+        try {
+          const response = await postJson('/library/move', {
+            currentPath,
+            destinationPath,
+            items: selectedItems.map((item) => ({
+              relativePath: item.relativePath,
+              entryType: getEntryType(item),
+            })),
+          });
+          selectedLibraryPaths = new Set();
+          applyLibraryListing(response);
+          setLibraryFeedback(
+            'Moved ' + response.movedCount + ' item' + (response.movedCount === 1 ? '' : 's') + '.',
+            null,
+          );
+        } catch (error) {
+          const message = error && error.message ? error.message : 'Move failed.';
+          setPickerState(message);
+          setLibraryFeedback(message, 'error');
+        } finally {
+          movingSelection = false;
+          updateSelectionButtons();
+        }
+      });
       deleteSelectedButton.addEventListener('click', async () => {
         const selectedItems = currentLibraryItems.filter((item) => selectedLibraryPaths.has(item.relativePath));
 
@@ -1028,7 +1313,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         }
 
         deletingSelection = true;
-        updateDeleteSelectedButton();
+        updateSelectionButtons();
         setLibraryFeedback('Deleting selected items...', null);
 
         try {
@@ -1060,7 +1345,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           setLibraryFeedback(message, 'error');
         } finally {
           deletingSelection = false;
-          updateDeleteSelectedButton();
+          updateSelectionButtons();
         }
       });
       fileInput.addEventListener('change', () => {

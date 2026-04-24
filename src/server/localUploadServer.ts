@@ -1,7 +1,7 @@
 import { File } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 
-import type { LibraryItem, UploadActivity } from '../lib/types';
+import type { LibraryItem, UploadActivity, VideoItem } from '../lib/types';
 import { clearPlaybackProgressForUris } from '../lib/playbackState';
 import {
   clearTempUploads,
@@ -12,7 +12,9 @@ import {
   getLibraryItem,
   listAllVideoItems,
   listLibraryItems,
+  moveLibraryItem,
   normalizeLibraryDirectoryPath,
+  renameLibraryItem,
 } from '../lib/videoLibrary';
 import { deleteThumbnailForVideo } from '../lib/videoThumbnails';
 import { buildUploadPage } from './uploadPage';
@@ -293,6 +295,14 @@ class LocalUploadServer {
         return await this.handleDelete(request);
       }
 
+      if (request.method === 'POST' && pathname === '/library/rename') {
+        return await this.handleRename(request);
+      }
+
+      if (request.method === 'POST' && pathname === '/library/move') {
+        return await this.handleMove(request);
+      }
+
       if (request.method === 'POST' && pathname === '/upload/chunk') {
         return await this.handleChunk(request);
       }
@@ -414,6 +424,109 @@ class LocalUploadServer {
 
       return jsonResponse({
         ok: true,
+        ...(await serializeLibraryListing(currentPath || null)),
+      });
+    } catch (error) {
+      return jsonResponse({ message: getErrorMessage(error) }, 400);
+    }
+  }
+
+  private async getPlaybackArtifactVideos(target: LibraryItem): Promise<VideoItem[]> {
+    return target.kind === 'folder' ? await listAllVideoItems(target.relativePath) : target.kind === 'video' ? [target] : [];
+  }
+
+  private async cleanupPlaybackArtifacts(videosToCleanup: VideoItem[]): Promise<void> {
+    if (videosToCleanup.length > 0) {
+      await clearPlaybackProgressForUris(videosToCleanup.map((video) => video.uri));
+      await Promise.all(videosToCleanup.map((video) => deleteThumbnailForVideo(video).catch(() => undefined)));
+    }
+  }
+
+  private readEntryType(input: unknown): 'file' | 'folder' {
+    const entryType = readString(input, 'entryType');
+
+    if (entryType !== 'file' && entryType !== 'folder') {
+      throw new Error('Invalid entryType.');
+    }
+
+    return entryType;
+  }
+
+  private async handleRename(request: NitroRequestLike): Promise<NitroResponseLike> {
+    try {
+      const body = parseJsonBody(request.body);
+      const relativePath = readString(body.relativePath, 'relativePath');
+      const entryType = this.readEntryType(body.entryType);
+      const currentPath = normalizeLibraryDirectoryPath(readOptionalString(body.currentPath));
+      const name = readString(body.name, 'name');
+      const target = await getLibraryItem(relativePath, entryType);
+
+      if (!target) {
+        throw new Error('Library item not found.');
+      }
+
+      const videosToCleanup = await this.getPlaybackArtifactVideos(target);
+      const renamed = await renameLibraryItem(target.relativePath, entryType, name);
+
+      if (renamed.uri !== target.uri) {
+        await this.cleanupPlaybackArtifacts(videosToCleanup);
+      }
+
+      this.emit({ status: 'idle', message: `Renamed ${target.name} to ${renamed.name}` });
+      await this.onLibraryChanged?.();
+
+      return jsonResponse({
+        ok: true,
+        item: serializeLibraryItem(renamed),
+        ...(await serializeLibraryListing(currentPath || null)),
+      });
+    } catch (error) {
+      return jsonResponse({ message: getErrorMessage(error) }, 400);
+    }
+  }
+
+  private async handleMove(request: NitroRequestLike): Promise<NitroResponseLike> {
+    try {
+      const body = parseJsonBody(request.body);
+      const currentPath = normalizeLibraryDirectoryPath(readOptionalString(body.currentPath));
+      const destinationPath = normalizeLibraryDirectoryPath(readOptionalString(body.destinationPath));
+      const rawItems = Array.isArray(body.items) ? body.items : [];
+
+      if (rawItems.length === 0) {
+        throw new Error('Select at least one item to move.');
+      }
+
+      let movedCount = 0;
+
+      for (const rawItem of rawItems) {
+        if (!rawItem || typeof rawItem !== 'object') {
+          throw new Error('Invalid item to move.');
+        }
+
+        const itemBody = rawItem as Record<string, unknown>;
+        const relativePath = readString(itemBody.relativePath, 'relativePath');
+        const entryType = this.readEntryType(itemBody.entryType);
+        const target = await getLibraryItem(relativePath, entryType);
+
+        if (!target) {
+          throw new Error('Library item not found.');
+        }
+
+        const videosToCleanup = await this.getPlaybackArtifactVideos(target);
+        const moved = await moveLibraryItem(target.relativePath, entryType, destinationPath || null);
+
+        if (moved.uri !== target.uri) {
+          await this.cleanupPlaybackArtifacts(videosToCleanup);
+          movedCount += 1;
+        }
+      }
+
+      this.emit({ status: 'idle', message: `Moved ${movedCount} item${movedCount === 1 ? '' : 's'}` });
+      await this.onLibraryChanged?.();
+
+      return jsonResponse({
+        ok: true,
+        movedCount,
         ...(await serializeLibraryListing(currentPath || null)),
       });
     } catch (error) {
