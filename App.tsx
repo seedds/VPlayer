@@ -13,10 +13,6 @@ import {
   Alert,
   AppState,
   FlatList,
-  type GestureResponderEvent,
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -73,26 +69,11 @@ type MainTabParamList = {
   Upload: undefined;
 };
 
-type DragSelectionMode = 'select' | 'deselect';
-
-type LibraryRowLayout = {
-  height: number;
-  y: number;
-};
-
 const INITIAL_ACTIVITY: UploadActivity = {
   status: 'idle',
   message: 'Starting local server...',
   updatedAt: Date.now(),
 };
-
-const DRAG_SELECTION_EDGE_THRESHOLD = 84;
-const DRAG_SELECTION_SCROLL_INTERVAL_MS = 16;
-const DRAG_SELECTION_SCROLL_STEP = 18;
-const DRAG_SELECTION_TOUCH_SLOP = 12;
-const LIBRARY_CARD_HORIZONTAL_PADDING = 16;
-const SELECTION_INDICATOR_HEIGHT = 30;
-const SELECTION_INDICATOR_WIDTH = 34;
 
 const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
 const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
@@ -625,26 +606,6 @@ export default function App() {
     [navigationRef, videoItems],
   );
 
-  const handleSetVideoSelection = useCallback((video: LibraryItem, shouldSelect: boolean) => {
-    setSelectedVideoUris((current) => {
-      const isSelected = current.has(video.uri);
-
-      if (isSelected === shouldSelect) {
-        return current;
-      }
-
-      const next = new Set(current);
-
-      if (shouldSelect) {
-        next.add(video.uri);
-      } else {
-        next.delete(video.uri);
-      }
-
-      return next;
-    });
-  }, []);
-
   const handleCancelSelection = useCallback(() => {
     setSelectionMode(false);
     setSelectedVideoUris(new Set());
@@ -917,11 +878,10 @@ export default function App() {
                                   setSelectionMode(true);
                                   setSelectedVideoUris(new Set([video.uri]));
                                 }}
-                                 onPlayVideo={handlePlayVideo}
-                                 onSetVideoSelection={handleSetVideoSelection}
-                                 onToggleVideoSelection={(video) => {
-                                   setSelectedVideoUris((current) => {
-                                     const next = new Set(current);
+                                onPlayVideo={handlePlayVideo}
+                                onToggleVideoSelection={(video) => {
+                                  setSelectedVideoUris((current) => {
+                                    const next = new Set(current);
 
                                     if (next.has(video.uri)) {
                                       next.delete(video.uri);
@@ -1032,7 +992,6 @@ type LibraryViewProps = {
   onDeleteVideo: (video: LibraryItem) => void;
   onLongPressVideo: (video: LibraryItem) => void;
   onPlayVideo: (uri: string) => void;
-  onSetVideoSelection: (video: LibraryItem, shouldSelect: boolean) => void;
   onToggleVideoSelection: (video: LibraryItem) => void;
 };
 
@@ -1053,330 +1012,46 @@ function LibraryView({
   onDeleteVideo,
   onLongPressVideo,
   onPlayVideo,
-  onSetVideoSelection,
   onToggleVideoSelection,
 }: LibraryViewProps) {
-  const flatListRef = useRef<FlatList<LibraryItem>>(null);
-  const libraryListViewportRef = useRef<View>(null);
-  const rowLayoutsRef = useRef<Map<string, LibraryRowLayout>>(new Map());
-  const selectedVideoUrisRef = useRef(selectedVideoUris);
-  const videosRef = useRef(videos);
-  const onSetVideoSelectionRef = useRef(onSetVideoSelection);
-  const scrollOffsetRef = useRef(0);
-  const contentHeightRef = useRef(0);
-  const listViewportHeightRef = useRef(0);
-  const listViewportWidthRef = useRef(0);
-  const listViewportFrameRef = useRef({ height: 0, pageX: 0, pageY: 0, width: 0 });
-  const selectionHandleStartVideoRef = useRef<LibraryItem | null>(null);
-  const dragSessionRef = useRef<{
-    lastTouch: { x: number; y: number } | null;
-    mode: DragSelectionMode;
-    visitedUris: Set<string>;
-  } | null>(null);
-  const autoScrollDirectionRef = useRef<-1 | 0 | 1>(0);
-  const autoScrollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [isSelectionDragging, setIsSelectionDragging] = useState(false);
-
-  useEffect(() => {
-    selectedVideoUrisRef.current = selectedVideoUris;
-  }, [selectedVideoUris]);
-
-  useEffect(() => {
-    videosRef.current = videos;
-  }, [videos]);
-
-  useEffect(() => {
-    onSetVideoSelectionRef.current = onSetVideoSelection;
-  }, [onSetVideoSelection]);
-
-  function stopAutoScroll() {
-    if (autoScrollIntervalRef.current) {
-      clearInterval(autoScrollIntervalRef.current);
-      autoScrollIntervalRef.current = null;
-    }
-
-    autoScrollDirectionRef.current = 0;
-  }
-
-  function endSelectionDrag() {
-    selectionHandleStartVideoRef.current = null;
-    dragSessionRef.current = null;
-    stopAutoScroll();
-    setIsSelectionDragging(false);
-  }
-
-  useEffect(() => {
-    return () => {
-      stopAutoScroll();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!selectionMode) {
-      endSelectionDrag();
-    }
-  }, [selectionMode]);
-
-  useEffect(() => {
-    rowLayoutsRef.current = new Map();
-    scrollOffsetRef.current = 0;
-    contentHeightRef.current = 0;
-    endSelectionDrag();
-  }, [videos]);
-
-  function measureLibraryListViewport() {
-    libraryListViewportRef.current?.measureInWindow((pageX, pageY, width, height) => {
-      listViewportFrameRef.current = { height, pageX, pageY, width };
-    });
-  }
-
-  function getAutoScrollDirection(localY: number): -1 | 0 | 1 {
-    if (!dragSessionRef.current || listViewportHeightRef.current <= 0) {
-      return 0;
-    }
-
-    if (localY <= DRAG_SELECTION_EDGE_THRESHOLD) {
-      return -1;
-    }
-
-    if (localY >= listViewportHeightRef.current - DRAG_SELECTION_EDGE_THRESHOLD) {
-      return 1;
-    }
-
-    return 0;
-  }
-
-  function getSelectionHandleHitVideo(localY: number): LibraryItem | null {
-    if (listViewportHeightRef.current <= 0) {
-      return null;
-    }
-
-    const contentY = scrollOffsetRef.current + localY;
-
-    for (const video of videosRef.current) {
-      const rowLayout = rowLayoutsRef.current.get(video.uri);
-
-      if (!rowLayout) {
-        continue;
-      }
-
-      if (
-        contentY >= rowLayout.y - DRAG_SELECTION_TOUCH_SLOP
-        && contentY <= rowLayout.y + rowLayout.height + DRAG_SELECTION_TOUCH_SLOP
-      ) {
-        return video;
-      }
-    }
-
-    return null;
-  }
-
-  function getSelectionHandleStartVideo(localX: number, localY: number): LibraryItem | null {
-    if (listViewportWidthRef.current <= 0 || listViewportHeightRef.current <= 0) {
-      return null;
-    }
-
-    const handleRight = listViewportWidthRef.current - LIBRARY_CARD_HORIZONTAL_PADDING + DRAG_SELECTION_TOUCH_SLOP;
-    const handleLeft = Math.max(handleRight - SELECTION_INDICATOR_WIDTH - DRAG_SELECTION_TOUCH_SLOP * 2, 0);
-
-    if (localX < handleLeft || localX > handleRight) {
-      return null;
-    }
-
-    const contentY = scrollOffsetRef.current + localY;
-
-    for (const video of videosRef.current) {
-      const rowLayout = rowLayoutsRef.current.get(video.uri);
-
-      if (!rowLayout) {
-        continue;
-      }
-
-      const indicatorTop = rowLayout.y + (rowLayout.height - SELECTION_INDICATOR_HEIGHT) / 2 - DRAG_SELECTION_TOUCH_SLOP;
-      const indicatorBottom = indicatorTop + SELECTION_INDICATOR_HEIGHT + DRAG_SELECTION_TOUCH_SLOP * 2;
-
-      if (contentY >= indicatorTop && contentY <= indicatorBottom) {
-        return video;
-      }
-    }
-
-    return null;
-  }
-
-  function applyDragSelectionAtPoint(localY: number) {
-    const dragSession = dragSessionRef.current;
-
-    if (!dragSession) {
-      return;
-    }
-
-    dragSession.lastTouch = { x: 0, y: localY };
-
-    const hitVideo = getSelectionHandleHitVideo(localY);
-
-    if (hitVideo && !dragSession.visitedUris.has(hitVideo.uri)) {
-      dragSession.visitedUris.add(hitVideo.uri);
-      onSetVideoSelectionRef.current(hitVideo, dragSession.mode === 'select');
-    }
-
-    const nextDirection = getAutoScrollDirection(localY);
-
-    if (nextDirection === autoScrollDirectionRef.current) {
-      return;
-    }
-
-    if (nextDirection === 0) {
-      stopAutoScroll();
-      return;
-    }
-
-    autoScrollDirectionRef.current = nextDirection;
-
-    if (autoScrollIntervalRef.current) {
-      return;
-    }
-
-    autoScrollIntervalRef.current = setInterval(() => {
-      const activeDragSession = dragSessionRef.current;
-
-      if (!activeDragSession) {
-        stopAutoScroll();
-        return;
-      }
-
-      const maxOffset = Math.max(contentHeightRef.current - listViewportHeightRef.current, 0);
-
-      if (maxOffset <= 0) {
-        stopAutoScroll();
-        return;
-      }
-
-      const nextOffset = Math.max(
-        0,
-        Math.min(scrollOffsetRef.current + autoScrollDirectionRef.current * DRAG_SELECTION_SCROLL_STEP, maxOffset),
-      );
-
-      if (nextOffset === scrollOffsetRef.current) {
-        stopAutoScroll();
-        return;
-      }
-
-      scrollOffsetRef.current = nextOffset;
-      flatListRef.current?.scrollToOffset({ animated: false, offset: nextOffset });
-
-      if (activeDragSession.lastTouch) {
-        applyDragSelectionAtPoint(activeDragSession.lastTouch.y);
-      }
-    }, DRAG_SELECTION_SCROLL_INTERVAL_MS);
-  }
-
-  const handleLibraryListLayout = useCallback((event: LayoutChangeEvent) => {
-    listViewportHeightRef.current = event.nativeEvent.layout.height;
-    listViewportWidthRef.current = event.nativeEvent.layout.width;
-    measureLibraryListViewport();
-  }, []);
-
-  const handleLibraryListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-  }, []);
-
-  const handleLibraryListContentSizeChange = useCallback((_width: number, height: number) => {
-    contentHeightRef.current = height;
-  }, []);
-
-  const handleLibraryRowLayout = useCallback((uri: string, event: LayoutChangeEvent) => {
-    rowLayoutsRef.current.set(uri, {
-      height: event.nativeEvent.layout.height,
-      y: event.nativeEvent.layout.y,
-    });
-  }, []);
-
-  const handleLibraryListStartShouldSetResponderCapture = useCallback((event: GestureResponderEvent) => {
-    if (!selectionMode) {
-      selectionHandleStartVideoRef.current = null;
-      return false;
-    }
-
-    const localX = event.nativeEvent.pageX - listViewportFrameRef.current.pageX;
-    const localY = event.nativeEvent.pageY - listViewportFrameRef.current.pageY;
-    const startVideo = getSelectionHandleStartVideo(localX, localY);
-    selectionHandleStartVideoRef.current = startVideo;
-    return startVideo !== null;
-  }, [selectionMode]);
-
-  const handleLibraryListResponderGrant = useCallback(() => {
-    const video = selectionHandleStartVideoRef.current;
-
-    if (!video) {
-      return;
-    }
-
-    const shouldSelect = !selectedVideoUrisRef.current.has(video.uri);
-      dragSessionRef.current = {
-        lastTouch: null,
-        mode: shouldSelect ? 'select' : 'deselect',
-        visitedUris: new Set([video.uri]),
-      };
-      setIsSelectionDragging(true);
-      onSetVideoSelectionRef.current(video, shouldSelect);
-  }, []);
-
-  const handleLibraryListTouchMove = useCallback((event: GestureResponderEvent) => {
-    if (!dragSessionRef.current) {
-      return;
-    }
-
-    const localY = event.nativeEvent.pageY - listViewportFrameRef.current.pageY;
-    applyDragSelectionAtPoint(localY);
-  }, []);
-
-  const handleLibraryListTouchEnd = useCallback(() => {
-    if (dragSessionRef.current) {
-      endSelectionDrag();
-    }
-  }, []);
-
   const renderItem = useCallback(
     ({ item: video }: { item: LibraryItem }) => (
-      <View collapsable={false} onLayout={(event) => handleLibraryRowLayout(video.uri, event)}>
-        <VideoCard
-          durationSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.durationSeconds : undefined}
-          isNew={video.kind === 'video' ? playbackStateByUri[video.uri]?.hasStartedPlayback !== true : false}
-          selected={selectedVideoUris.has(video.uri)}
-          selectionMode={selectionMode}
-          savedPositionSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.positionSeconds ?? 0 : undefined}
-          thumbnailSource={video.kind === 'video' ? thumbnailSourceByUri[video.uri] : undefined}
-          video={video}
-          onLongPress={() => {
-            if (selectionMode) {
-              onToggleVideoSelection(video);
-              return;
+      <VideoCard
+        durationSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.durationSeconds : undefined}
+        isNew={video.kind === 'video' ? playbackStateByUri[video.uri]?.hasStartedPlayback !== true : false}
+        selected={selectedVideoUris.has(video.uri)}
+        selectionMode={selectionMode}
+        savedPositionSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.positionSeconds ?? 0 : undefined}
+        thumbnailSource={video.kind === 'video' ? thumbnailSourceByUri[video.uri] : undefined}
+        video={video}
+        onLongPress={() => {
+          if (selectionMode) {
+            onToggleVideoSelection(video);
+            return;
+          }
+
+          onLongPressVideo(video);
+        }}
+        onDelete={() => onDeleteVideo(video)}
+        onPlay={() => {
+          if (selectionMode) {
+            onToggleVideoSelection(video);
+            return;
+          }
+
+          if (video.kind !== 'video') {
+            if (video.kind === 'folder') {
+              onOpenFolder(video.relativePath);
             }
 
-            onLongPressVideo(video);
-          }}
-          onDelete={() => onDeleteVideo(video)}
-          onPlay={() => {
-            if (selectionMode) {
-              onToggleVideoSelection(video);
-              return;
-            }
+            return;
+          }
 
-            if (video.kind !== 'video') {
-              if (video.kind === 'folder') {
-                onOpenFolder(video.relativePath);
-              }
-
-              return;
-            }
-
-            onPlayVideo(video.uri);
-          }}
-        />
-      </View>
+          onPlayVideo(video.uri);
+        }}
+      />
     ),
     [
-      handleLibraryRowLayout,
       onDeleteVideo,
       onLongPressVideo,
       onOpenFolder,
@@ -1422,44 +1097,24 @@ function LibraryView({
         )}
       </View>
 
-      <View
-        collapsable={false}
-        ref={libraryListViewportRef}
-        onLayout={handleLibraryListLayout}
-        onResponderGrant={handleLibraryListResponderGrant}
-        onResponderRelease={handleLibraryListTouchEnd}
-        onResponderTerminate={handleLibraryListTouchEnd}
-        onResponderTerminationRequest={() => false}
-        onStartShouldSetResponderCapture={handleLibraryListStartShouldSetResponderCapture}
-        onTouchCancel={handleLibraryListTouchEnd}
-        onTouchEnd={handleLibraryListTouchEnd}
-        onTouchMove={handleLibraryListTouchMove}
-        style={styles.libraryListViewport}
-      >
-        <FlatList
-          ref={flatListRef}
-          contentContainerStyle={[styles.libraryList, videos.length === 0 && styles.libraryListEmpty]}
-          data={videos}
-          keyExtractor={(item) => item.id}
-          keyboardShouldPersistTaps="handled"
-          onContentSizeChange={handleLibraryListContentSizeChange}
-          onScroll={handleLibraryListScroll}
-          renderItem={renderItem}
-          scrollEnabled={!isSelectionDragging}
-          scrollEventThrottle={16}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateTitle}>{currentFolderPath ? 'This folder is empty' : 'No media yet'}</Text>
-              <Text style={styles.emptyStateText}>
-                {currentFolderPath
-                  ? 'Use the Upload tab to add files here, or go up to another folder.'
-                  : 'Use the Upload tab at the bottom, open the device URL on your computer, and send a file here.'}
-              </Text>
-            </View>
-          }
-        />
-      </View>
+      <FlatList
+        contentContainerStyle={[styles.libraryList, videos.length === 0 && styles.libraryListEmpty]}
+        data={videos}
+        keyExtractor={(item) => item.id}
+        keyboardShouldPersistTaps="handled"
+        renderItem={renderItem}
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateTitle}>{currentFolderPath ? 'This folder is empty' : 'No media yet'}</Text>
+            <Text style={styles.emptyStateText}>
+              {currentFolderPath
+                ? 'Use the Upload tab to add files here, or go up to another folder.'
+                : 'Use the Upload tab at the bottom, open the device URL on your computer, and send a file here.'}
+            </Text>
+          </View>
+        }
+      />
     </View>
   );
 }
@@ -1628,9 +1283,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   libraryWrap: {
-    flex: 1,
-  },
-  libraryListViewport: {
     flex: 1,
   },
   libraryToolbar: {
