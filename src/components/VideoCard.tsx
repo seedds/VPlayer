@@ -11,7 +11,9 @@ type VideoCardProps = {
   onDelete: () => void;
   onLongPress: () => void;
   onPlay: () => void;
-  onSelectionHandlePressIn?: (event: GestureResponderEvent) => void;
+  onSelectionHandleGrant?: (event: GestureResponderEvent) => void;
+  onSelectionHandleMove?: (event: GestureResponderEvent) => void;
+  onSelectionHandleRelease?: (event: GestureResponderEvent) => void;
   savedPositionSeconds?: number;
   selected: boolean;
   selectionMode: boolean;
@@ -25,7 +27,9 @@ export function VideoCard({
   onDelete,
   onLongPress,
   onPlay,
-  onSelectionHandlePressIn,
+  onSelectionHandleGrant,
+  onSelectionHandleMove,
+  onSelectionHandleRelease,
   savedPositionSeconds,
   selected,
   selectionMode,
@@ -104,23 +108,22 @@ export function VideoCard({
             {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
           </View>
           <View style={styles.actionSlot}>
-            <Pressable
+            <View
               hitSlop={8}
-              onPress={(event) => {
-                event.stopPropagation();
-              }}
-              onPressIn={(event) => {
-                event.stopPropagation();
-                onSelectionHandlePressIn?.(event);
-              }}
-              style={({ pressed }) => [
+              onMoveShouldSetResponder={() => true}
+              onResponderGrant={onSelectionHandleGrant}
+              onResponderMove={onSelectionHandleMove}
+              onResponderRelease={onSelectionHandleRelease}
+              onResponderTerminate={onSelectionHandleRelease}
+              onResponderTerminationRequest={() => false}
+              onStartShouldSetResponder={() => true}
+              style={[
                 styles.selectionIndicator,
                 selected && styles.selectionIndicatorActive,
-                pressed && styles.selectionIndicatorPressed,
               ]}
             >
               <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
-            </Pressable>
+            </View>
           </View>
         </View>
       ) : (
@@ -312,9 +315,6 @@ const styles = StyleSheet.create({
   selectionIndicatorActive: {
     borderColor: '#1f6f68',
     backgroundColor: '#1f6f68',
-  },
-  selectionIndicatorPressed: {
-    opacity: 0.84,
   },
   selectionIndicatorText: {
     color: 'transparent',

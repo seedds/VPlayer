@@ -90,8 +90,8 @@ const DRAG_SELECTION_EDGE_THRESHOLD = 84;
 const DRAG_SELECTION_SCROLL_INTERVAL_MS = 16;
 const DRAG_SELECTION_SCROLL_STEP = 18;
 const DRAG_SELECTION_TOUCH_SLOP = 12;
+const LIBRARY_ACTION_SLOT_WIDTH = 78;
 const LIBRARY_CARD_HORIZONTAL_PADDING = 16;
-const SELECTION_INDICATOR_WIDTH = 34;
 
 const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
 const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
@@ -1149,7 +1149,7 @@ function LibraryView({
     }
 
     const handleLeft = Math.max(
-      listViewportWidthRef.current - LIBRARY_CARD_HORIZONTAL_PADDING - SELECTION_INDICATOR_WIDTH - DRAG_SELECTION_TOUCH_SLOP,
+      listViewportWidthRef.current - LIBRARY_CARD_HORIZONTAL_PADDING - LIBRARY_ACTION_SLOT_WIDTH - DRAG_SELECTION_TOUCH_SLOP,
       0,
     );
     const handleRight = listViewportWidthRef.current - LIBRARY_CARD_HORIZONTAL_PADDING + DRAG_SELECTION_TOUCH_SLOP;
@@ -1266,8 +1266,8 @@ function LibraryView({
     });
   }, []);
 
-  const handleSelectionHandlePressIn = useCallback(
-    (video: LibraryItem, pageX: number, pageY: number) => {
+  const handleSelectionHandleGrant = useCallback(
+    (video: LibraryItem, event: GestureResponderEvent) => {
       if (!selectionMode) {
         return;
       }
@@ -1283,17 +1283,15 @@ function LibraryView({
 
       measureLibraryListViewport();
 
-      const localX = pageX - listViewportFrameRef.current.pageX;
-      const localY = pageY - listViewportFrameRef.current.pageY;
+      const localX = event.nativeEvent.pageX - listViewportFrameRef.current.pageX;
+      const localY = event.nativeEvent.pageY - listViewportFrameRef.current.pageY;
 
       applyDragSelectionAtPoint(localX, localY);
     },
     [selectionMode],
   );
 
-  const handleLibraryListMoveShouldSetResponderCapture = useCallback(() => dragSessionRef.current !== null, []);
-
-  const handleLibraryListResponderMove = useCallback((event: GestureResponderEvent) => {
+  const handleSelectionHandleMove = useCallback((event: GestureResponderEvent) => {
     if (!dragSessionRef.current) {
       return;
     }
@@ -1303,7 +1301,7 @@ function LibraryView({
     applyDragSelectionAtPoint(localX, localY);
   }, []);
 
-  const handleLibraryListTouchEnd = useCallback(() => {
+  const handleSelectionHandleRelease = useCallback(() => {
     if (dragSessionRef.current) {
       endSelectionDrag();
     }
@@ -1345,15 +1343,19 @@ function LibraryView({
 
             onPlayVideo(video.uri);
           }}
-          onSelectionHandlePressIn={(event) => {
-            handleSelectionHandlePressIn(video, event.nativeEvent.pageX, event.nativeEvent.pageY);
+          onSelectionHandleGrant={(event) => {
+            handleSelectionHandleGrant(video, event);
           }}
+          onSelectionHandleMove={handleSelectionHandleMove}
+          onSelectionHandleRelease={handleSelectionHandleRelease}
         />
       </View>
     ),
     [
       handleLibraryRowLayout,
-      handleSelectionHandlePressIn,
+      handleSelectionHandleGrant,
+      handleSelectionHandleMove,
+      handleSelectionHandleRelease,
       onDeleteVideo,
       onLongPressVideo,
       onOpenFolder,
@@ -1402,13 +1404,6 @@ function LibraryView({
       <View
         ref={libraryListViewportRef}
         onLayout={handleLibraryListLayout}
-        onMoveShouldSetResponderCapture={handleLibraryListMoveShouldSetResponderCapture}
-        onResponderMove={handleLibraryListResponderMove}
-        onResponderRelease={handleLibraryListTouchEnd}
-        onResponderTerminate={handleLibraryListTouchEnd}
-        onResponderTerminationRequest={() => dragSessionRef.current === null}
-        onTouchCancel={handleLibraryListTouchEnd}
-        onTouchEnd={handleLibraryListTouchEnd}
         style={styles.libraryListViewport}
       >
         <FlatList
