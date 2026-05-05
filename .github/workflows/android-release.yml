@@ -95,17 +95,13 @@ jobs:
           $(git for-each-ref refs/tags --sort=-creatordate --format='%(refname:short)')
           EOF
 
-          changes_file="$RUNNER_TEMP/release-changes.md"
           notes_file="$RUNNER_TEMP/release-notes.md"
+          commits_file="$RUNNER_TEMP/release-commits.txt"
 
           if [ -n "$previous_tag" ]; then
-            git log --reverse --pretty='- %s (%h)' "${previous_tag}..HEAD" > "$changes_file"
+            git rev-list --reverse "${previous_tag}..HEAD" > "$commits_file"
           else
-            git log --reverse --pretty='- %s (%h)' > "$changes_file"
-          fi
-
-          if [ ! -s "$changes_file" ]; then
-            printf '%s\n' '- Rebuilt release artifacts for this commit.' > "$changes_file"
+            git rev-list --reverse HEAD > "$commits_file"
           fi
 
           {
@@ -115,7 +111,22 @@ jobs:
             else
               printf 'Changes included in this release.\n\n'
             fi
-            cat "$changes_file"
+
+            if [ ! -s "$commits_file" ]; then
+              printf '%s\n' 'Rebuilt release artifacts for this commit.'
+            else
+              while IFS= read -r commit; do
+                short_commit=$(git rev-parse --short "$commit")
+                subject=$(git log -1 --format=%s "$commit")
+                body=$(git log -1 --format=%b "$commit")
+
+                printf '### `%s` %s\n\n' "$short_commit" "$subject"
+
+                if [ -n "$body" ]; then
+                  printf '%s\n\n' "$body"
+                fi
+              done < "$commits_file"
+            fi
           } > "$notes_file"
 
           echo "notes_path=$notes_file" >> "$GITHUB_OUTPUT"
