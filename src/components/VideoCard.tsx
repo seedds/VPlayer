@@ -1,5 +1,5 @@
 import { Image, type ImageProps } from 'expo-image';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 
 import { formatDuration } from '../lib/format';
@@ -11,6 +11,7 @@ type VideoCardProps = {
   onDelete: () => void;
   onLongPress: () => void;
   onPlay: () => void;
+  onSelectionHandlePressIn?: (event: GestureResponderEvent) => void;
   savedPositionSeconds?: number;
   selected: boolean;
   selectionMode: boolean;
@@ -24,6 +25,7 @@ export function VideoCard({
   onDelete,
   onLongPress,
   onPlay,
+  onSelectionHandlePressIn,
   savedPositionSeconds,
   selected,
   selectionMode,
@@ -102,9 +104,23 @@ export function VideoCard({
             {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
           </View>
           <View style={styles.actionSlot}>
-            <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
+            <Pressable
+              hitSlop={8}
+              onPress={(event) => {
+                event.stopPropagation();
+              }}
+              onPressIn={(event) => {
+                event.stopPropagation();
+                onSelectionHandlePressIn?.(event);
+              }}
+              style={({ pressed }) => [
+                styles.selectionIndicator,
+                selected && styles.selectionIndicatorActive,
+                pressed && styles.selectionIndicatorPressed,
+              ]}
+            >
               <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
-            </View>
+            </Pressable>
           </View>
         </View>
       ) : (
@@ -296,6 +312,9 @@ const styles = StyleSheet.create({
   selectionIndicatorActive: {
     borderColor: '#1f6f68',
     backgroundColor: '#1f6f68',
+  },
+  selectionIndicatorPressed: {
+    opacity: 0.84,
   },
   selectionIndicatorText: {
     color: 'transparent',
