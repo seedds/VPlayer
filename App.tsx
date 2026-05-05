@@ -90,8 +90,6 @@ const DRAG_SELECTION_EDGE_THRESHOLD = 84;
 const DRAG_SELECTION_SCROLL_INTERVAL_MS = 16;
 const DRAG_SELECTION_SCROLL_STEP = 18;
 const DRAG_SELECTION_TOUCH_SLOP = 12;
-const LIBRARY_ACTION_SLOT_WIDTH = 78;
-const LIBRARY_CARD_HORIZONTAL_PADDING = 16;
 
 const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
 const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
@@ -1064,7 +1062,6 @@ function LibraryView({
   const scrollOffsetRef = useRef(0);
   const contentHeightRef = useRef(0);
   const listViewportHeightRef = useRef(0);
-  const listViewportWidthRef = useRef(0);
   const listViewportFrameRef = useRef({ height: 0, pageX: 0, pageY: 0, width: 0 });
   const dragSessionRef = useRef<{
     lastTouch: { x: number; y: number } | null;
@@ -1143,18 +1140,8 @@ function LibraryView({
     return 0;
   }
 
-  function getSelectionHandleHitVideo(localX: number, localY: number): LibraryItem | null {
-    if (listViewportWidthRef.current <= 0) {
-      return null;
-    }
-
-    const handleLeft = Math.max(
-      listViewportWidthRef.current - LIBRARY_CARD_HORIZONTAL_PADDING - LIBRARY_ACTION_SLOT_WIDTH - DRAG_SELECTION_TOUCH_SLOP,
-      0,
-    );
-    const handleRight = listViewportWidthRef.current - LIBRARY_CARD_HORIZONTAL_PADDING + DRAG_SELECTION_TOUCH_SLOP;
-
-    if (localX < handleLeft || localX > handleRight) {
+  function getSelectionHandleHitVideo(localY: number): LibraryItem | null {
+    if (listViewportHeightRef.current <= 0) {
       return null;
     }
 
@@ -1187,7 +1174,7 @@ function LibraryView({
 
     dragSession.lastTouch = { x: localX, y: localY };
 
-    const hitVideo = getSelectionHandleHitVideo(localX, localY);
+    const hitVideo = getSelectionHandleHitVideo(localY);
 
     if (hitVideo && !dragSession.visitedUris.has(hitVideo.uri)) {
       dragSession.visitedUris.add(hitVideo.uri);
@@ -1247,7 +1234,6 @@ function LibraryView({
 
   const handleLibraryListLayout = useCallback((event: LayoutChangeEvent) => {
     listViewportHeightRef.current = event.nativeEvent.layout.height;
-    listViewportWidthRef.current = event.nativeEvent.layout.width;
     measureLibraryListViewport();
   }, []);
 
@@ -1402,6 +1388,7 @@ function LibraryView({
       </View>
 
       <View
+        collapsable={false}
         ref={libraryListViewportRef}
         onLayout={handleLibraryListLayout}
         style={styles.libraryListViewport}
