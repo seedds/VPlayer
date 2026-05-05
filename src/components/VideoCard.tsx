@@ -1,5 +1,5 @@
 import { Image, type ImageProps } from 'expo-image';
-import { Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 
 import { formatDuration } from '../lib/format';
@@ -11,9 +11,6 @@ type VideoCardProps = {
   onDelete: () => void;
   onLongPress: () => void;
   onPlay: () => void;
-  onSelectionHandleGrant?: (event: GestureResponderEvent) => void;
-  onSelectionHandleMove?: (event: GestureResponderEvent) => void;
-  onSelectionHandleRelease?: (event: GestureResponderEvent) => void;
   savedPositionSeconds?: number;
   selected: boolean;
   selectionMode: boolean;
@@ -27,9 +24,6 @@ export function VideoCard({
   onDelete,
   onLongPress,
   onPlay,
-  onSelectionHandleGrant,
-  onSelectionHandleMove,
-  onSelectionHandleRelease,
   savedPositionSeconds,
   selected,
   selectionMode,
@@ -108,20 +102,7 @@ export function VideoCard({
             {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
           </View>
           <View style={styles.actionSlot}>
-            <View
-              hitSlop={8}
-              onMoveShouldSetResponder={() => true}
-              onResponderGrant={onSelectionHandleGrant}
-              onResponderMove={onSelectionHandleMove}
-              onResponderRelease={onSelectionHandleRelease}
-              onResponderTerminate={onSelectionHandleRelease}
-              onResponderTerminationRequest={() => false}
-              onStartShouldSetResponder={() => true}
-              style={[
-                styles.selectionIndicator,
-                selected && styles.selectionIndicatorActive,
-              ]}
-            >
+            <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
               <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
             </View>
           </View>
