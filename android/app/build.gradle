@@ -84,6 +84,10 @@ def releaseStoreFile = findProperty('VPLAYER_RELEASE_STORE_FILE') ?: System.gete
 def releaseStorePassword = findProperty('VPLAYER_RELEASE_STORE_PASSWORD') ?: System.getenv('VPLAYER_RELEASE_STORE_PASSWORD')
 def releaseKeyAlias = findProperty('VPLAYER_RELEASE_KEY_ALIAS') ?: System.getenv('VPLAYER_RELEASE_KEY_ALIAS')
 def releaseKeyPassword = findProperty('VPLAYER_RELEASE_KEY_PASSWORD') ?: System.getenv('VPLAYER_RELEASE_KEY_PASSWORD')
+def configuredVersionCode = (findProperty('VPLAYER_VERSION_CODE') ?: System.getenv('VPLAYER_VERSION_CODE') ?: '3').toString()
+def configuredVersionName = (findProperty('VPLAYER_VERSION_NAME') ?: System.getenv('VPLAYER_VERSION_NAME') ?: '1.0.2').toString()
+def parsedVersionCode = Integer.parseInt(configuredVersionCode)
+def apkVersionName = configuredVersionName.replaceAll('[^0-9A-Za-z._-]', '-')
 def hasReleaseSigning = releaseStoreFile && file(releaseStoreFile).exists() && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
 
 android {
@@ -97,8 +101,8 @@ android {
         applicationId 'com.seedds.vplayer'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
-        versionName "1.0.2"
+        versionCode parsedVersionCode
+        versionName configuredVersionName
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -146,7 +150,7 @@ android {
 androidComponents {
     onVariants(selector().withBuildType("release")) { variant ->
         variant.outputs.each { output ->
-            output.outputFileName.set("vplayer.apk")
+            output.outputFileName.set("vplayer-${apkVersionName}-${parsedVersionCode}.apk")
         }
     }
 }

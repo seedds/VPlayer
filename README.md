@@ -52,7 +52,7 @@ cd android
 
 Output file:
 
-- `android/app/build/outputs/apk/release/vplayer.apk`
+- `android/app/build/outputs/apk/release/vplayer-<versionName>-<versionCode>.apk`
 
 Build an ARM64-only APK:
 

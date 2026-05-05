@@ -224,6 +224,10 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     restartAutoHideTimer(player.playing && !isScrubbing);
   }
 
+  function resumeAutoHideAfterBackgroundGesture() {
+    restartAutoHideTimer(controlsVisible && isPlaying && !isScrubbing);
+  }
+
   useEffect(() => {
     player.keepScreenOnWhilePlaying = true;
     player.playbackRate = 1;
@@ -662,6 +666,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
   function handleBackgroundResponderGrant(event: GestureResponderEvent) {
     updateBackgroundGestureTouchCount(event);
+    clearAutoHideTimer();
 
     clearHoldToBoostTimer();
     holdToBoostConsumedRef.current = false;
@@ -692,6 +697,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
     if (touchCount > 1) {
       cancelHoldToBoostGesture();
+      resumeAutoHideAfterBackgroundGesture();
     }
   }
 
@@ -701,10 +707,12 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     resetBackgroundGestureTouchCount();
 
     if (completeHoldToBoostGesture()) {
+      resumeAutoHideAfterBackgroundGesture();
       return;
     }
 
     handleBackgroundTap(handleHideControls, touchCount);
+    resumeAutoHideAfterBackgroundGesture();
   }
 
   function handleHiddenBackgroundResponderRelease(event: GestureResponderEvent) {
@@ -713,15 +721,18 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     resetBackgroundGestureTouchCount();
 
     if (completeHoldToBoostGesture()) {
+      resumeAutoHideAfterBackgroundGesture();
       return;
     }
 
     handleBackgroundTap(handleToggleControls, touchCount);
+    resumeAutoHideAfterBackgroundGesture();
   }
 
   function handleBackgroundResponderTerminate() {
     cancelHoldToBoostGesture();
     resetBackgroundGestureTouchCount();
+    resumeAutoHideAfterBackgroundGesture();
   }
 
   function handleSeekBarLayout(event: LayoutChangeEvent) {

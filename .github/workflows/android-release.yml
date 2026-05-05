@@ -2,8 +2,9 @@ name: Android Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,31 +15,45 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6.4.0
         with:
           node-version: 20
           cache: npm
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5.2.0
         with:
           distribution: temurin
           java-version: 17
 
       - name: Setup Gradle cache
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6.1.0
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4.0.1
 
       - name: Install dependencies
         run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Compute release metadata
+        id: release_meta
+        run: |
+          app_version=$(node -p "require('./app.json').expo.version")
+          build_number="${GITHUB_RUN_NUMBER}"
+          release_tag="v${app_version}-build.${build_number}"
+          apk_name="vplayer-${app_version}-${build_number}.apk"
+          {
+            echo "app_version=${app_version}"
+            echo "build_number=${build_number}"
+            echo "release_tag=${release_tag}"
+            echo "apk_name=${apk_name}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Verify release signing secrets
         env:
@@ -75,10 +90,16 @@ jobs:
           VPLAYER_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
           VPLAYER_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
           VPLAYER_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+          VPLAYER_VERSION_NAME: ${{ steps.release_meta.outputs.app_version }}
+          VPLAYER_VERSION_CODE: ${{ steps.release_meta.outputs.build_number }}
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: android/app/build/outputs/apk/release/vplayer.apk
+          tag_name: ${{ steps.release_meta.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          files: android/app/build/outputs/apk/release/${{ steps.release_meta.outputs.apk_name }}
           generate_release_notes: true
-          name: VPlayer ${{ github.ref_name }}
+          make_latest: true
+          overwrite_files: true
+          name: VPlayer ${{ steps.release_meta.outputs.app_version }} (${{ steps.release_meta.outputs.build_number }})
