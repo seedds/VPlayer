@@ -1,5 +1,7 @@
 import { Image, type ImageProps } from 'expo-image';
+import { useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Swipeable from 'react-native-gesture-handler/Swipeable';
 import Svg, { Circle, Path } from 'react-native-svg';
 
 import { formatDuration } from '../lib/format';
@@ -30,6 +32,7 @@ export function VideoCard({
   thumbnailSource,
   video,
 }: VideoCardProps) {
+  const swipeableRef = useRef<Swipeable | null>(null);
   const isVideo = video.kind === 'video';
   const isFolder = video.kind === 'folder';
   const playbackProgress =
@@ -69,63 +72,85 @@ export function VideoCard({
     return 'File cannot be played';
   }
 
-  return (
-    <Pressable onLongPress={onLongPress} onPress={onPlay} style={({ pressed }) => [styles.card, selected && styles.cardSelected, pressed && styles.cardPressed]}>
-      <View style={styles.primaryAction}>
-        <View style={styles.thumbnailWrap}>
-          {isVideo && thumbnailSource ? (
-            <Image contentFit="cover" source={thumbnailSource} style={styles.thumbnail} />
-          ) : isFolder ? (
-            <View style={[styles.thumbnailPlaceholder, styles.folderThumbnailPlaceholder]}>
-              <FolderThumbnailIcon />
-            </View>
-          ) : (
-            <View style={styles.thumbnailPlaceholder}>
-              <Text style={styles.thumbnailPlaceholderText}>{getPlaceholderLabel()}</Text>
-            </View>
-          )}
+  function renderCardContent() {
+    return (
+      <Pressable onLongPress={onLongPress} onPress={onPlay} style={({ pressed }) => [styles.card, selected && styles.cardSelected, pressed && styles.cardPressed]}>
+        <View style={styles.primaryAction}>
+          <View style={styles.thumbnailWrap}>
+            {isVideo && thumbnailSource ? (
+              <Image contentFit="cover" source={thumbnailSource} style={styles.thumbnail as ImageProps['style']} />
+            ) : isFolder ? (
+              <View style={[styles.thumbnailPlaceholder, styles.folderThumbnailPlaceholder]}>
+                <FolderThumbnailIcon />
+              </View>
+            ) : (
+              <View style={styles.thumbnailPlaceholder}>
+                <Text style={styles.thumbnailPlaceholderText}>{getPlaceholderLabel()}</Text>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.content}>
+            <Text numberOfLines={1} style={styles.title}>
+              {video.name}
+            </Text>
+            <Text numberOfLines={1} style={styles.meta}>
+              {getMetaText()}
+            </Text>
+          </View>
         </View>
 
-        <View style={styles.content}>
-          <Text numberOfLines={1} style={styles.title}>
-            {video.name}
-          </Text>
-          <Text numberOfLines={1} style={styles.meta}>
-            {getMetaText()}
-          </Text>
-        </View>
+        {selectionMode ? (
+          <View style={styles.rowActions}>
+            <View style={styles.badgeSlot}>
+              {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
+            </View>
+            <View style={styles.actionSlot}>
+              <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
+                <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.badgeSlot}>
+            {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
+          </View>
+        )}
+      </Pressable>
+    );
+  }
+
+  function renderRightActions() {
+    return (
+      <View style={styles.deleteActionWrap}>
+        <Pressable
+          onPress={() => {
+            swipeableRef.current?.close();
+            onDelete();
+          }}
+          style={({ pressed }) => [styles.deleteAction, pressed && styles.deleteActionPressed]}
+        >
+          <Text style={styles.deleteActionLabel}>Delete</Text>
+        </Pressable>
       </View>
+    );
+  }
 
-      {selectionMode ? (
-        <View style={styles.rowActions}>
-          <View style={styles.badgeSlot}>
-            {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
-          </View>
-          <View style={styles.actionSlot}>
-            <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
-              <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
-            </View>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.rowActions}>
-          <View style={styles.badgeSlot}>
-            {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
-          </View>
-          <View style={styles.actionSlot}>
-            <Pressable
-              onPress={(event) => {
-                event.stopPropagation();
-                onDelete();
-              }}
-              style={({ pressed }) => [styles.deleteButton, pressed && styles.deleteButtonPressed]}
-            >
-              <Text style={styles.deleteLabel}>Delete</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
-    </Pressable>
+  if (selectionMode) {
+    return renderCardContent();
+  }
+
+  return (
+    <Swipeable
+      ref={swipeableRef}
+      containerStyle={styles.swipeableContainer}
+      friction={2}
+      overshootRight={false}
+      renderRightActions={renderRightActions}
+      rightThreshold={40}
+    >
+      {renderCardContent()}
+    </Swipeable>
   );
 }
 
@@ -199,6 +224,10 @@ const styles = StyleSheet.create({
   cardSelected: {
     backgroundColor: '#eef7f5',
   },
+  swipeableContainer: {
+    width: '100%',
+    backgroundColor: '#c84630',
+  },
   primaryAction: {
     flex: 1,
     flexDirection: 'row',
@@ -243,12 +272,6 @@ const styles = StyleSheet.create({
     color: '#6b6158',
     fontSize: 12,
   },
-  deleteButton: {
-    borderRadius: 14,
-    backgroundColor: '#faede7',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
   rowActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -264,13 +287,22 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'center',
   },
-  deleteButtonPressed: {
-    opacity: 0.76,
+  deleteActionWrap: {
+    width: 88,
   },
-  deleteLabel: {
-    color: '#9e3e28',
+  deleteAction: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#c84630',
+  },
+  deleteActionPressed: {
+    backgroundColor: '#a93523',
+  },
+  deleteActionLabel: {
+    color: '#fff3ef',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   newLabel: {
     color: '#1f6f68',
