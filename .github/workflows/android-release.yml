@@ -46,16 +46,7 @@ jobs:
       - name: Compute release metadata
         id: release_meta
         run: |
-          app_version=$(node -p "require('./app.json').expo.version")
-          build_number="${GITHUB_RUN_NUMBER}"
-          release_tag="v${app_version}-build.${build_number}"
-          apk_name="vplayer-${app_version}-${build_number}.apk"
-          {
-            echo "app_version=${app_version}"
-            echo "build_number=${build_number}"
-            echo "release_tag=${release_tag}"
-            echo "apk_name=${apk_name}"
-          } >> "$GITHUB_OUTPUT"
+          node ./scripts/android-release-meta.js --format=github-output >> "$GITHUB_OUTPUT"
 
       - name: Configure Android SDK path
         run: printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > android/local.properties

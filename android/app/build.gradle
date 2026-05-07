@@ -1,8 +1,29 @@
+import groovy.json.JsonSlurper
+
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+def releaseMetadataScript = new File(projectRoot, "scripts/android-release-meta.js")
+
+def readReleaseMetadata = {
+    def command = ["node", releaseMetadataScript.getAbsolutePath(), "--format=json"]
+    def output = new StringBuffer()
+    def error = new StringBuffer()
+    def process = command.execute(null, rootDir)
+
+    process.consumeProcessOutput(output, error)
+    def exitCode = process.waitFor()
+
+    if (exitCode != 0) {
+        throw new GradleException("Failed to compute Android release metadata: ${error.toString().trim()}")
+    }
+
+    return new JsonSlurper().parseText(output.toString().trim())
+}
+
+def releaseMetadata = readReleaseMetadata()
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -84,8 +105,8 @@ def releaseStoreFile = findProperty('VPLAYER_RELEASE_STORE_FILE') ?: System.gete
 def releaseStorePassword = findProperty('VPLAYER_RELEASE_STORE_PASSWORD') ?: System.getenv('VPLAYER_RELEASE_STORE_PASSWORD')
 def releaseKeyAlias = findProperty('VPLAYER_RELEASE_KEY_ALIAS') ?: System.getenv('VPLAYER_RELEASE_KEY_ALIAS')
 def releaseKeyPassword = findProperty('VPLAYER_RELEASE_KEY_PASSWORD') ?: System.getenv('VPLAYER_RELEASE_KEY_PASSWORD')
-def configuredVersionCode = (findProperty('VPLAYER_VERSION_CODE') ?: System.getenv('VPLAYER_VERSION_CODE') ?: '3').toString()
-def configuredVersionName = (findProperty('VPLAYER_VERSION_NAME') ?: System.getenv('VPLAYER_VERSION_NAME') ?: '1.0.2').toString()
+def configuredVersionCode = (findProperty('VPLAYER_VERSION_CODE') ?: System.getenv('VPLAYER_VERSION_CODE') ?: releaseMetadata.versionCode.toString()).toString()
+def configuredVersionName = (findProperty('VPLAYER_VERSION_NAME') ?: System.getenv('VPLAYER_VERSION_NAME') ?: releaseMetadata.versionName.toString()).toString()
 def parsedVersionCode = Integer.parseInt(configuredVersionCode)
 def apkVersionName = configuredVersionName.replaceAll('[^0-9A-Za-z._-]', '-')
 def hasReleaseSigning = releaseStoreFile && file(releaseStoreFile).exists() && releaseStorePassword && releaseKeyAlias && releaseKeyPassword

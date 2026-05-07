@@ -150,6 +150,9 @@ export function VideoCard({
 
   return (
     <Swipeable
+      activeOffsetX={[-24, 24]}
+      dragOffsetFromRightEdge={24}
+      failOffsetY={[-10, 10]}
       ref={swipeableRef}
       containerStyle={styles.swipeableContainer}
       friction={2}
@@ -165,7 +168,7 @@ export function VideoCard({
       }}
       overshootRight={false}
       renderRightActions={renderRightActions}
-      rightThreshold={40}
+      rightThreshold={56}
     >
       {renderCardContent()}
     </Swipeable>

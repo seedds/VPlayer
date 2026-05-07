@@ -43,6 +43,13 @@ eas build -p android --profile preview
 
 ### Local Gradle build
 
+Local and GitHub release builds use the same metadata source:
+
+- `versionName` comes from `app.json`
+- `versionCode` defaults to `1000000 + git rev-list --count HEAD`
+
+That keeps the package version in sync for the same commit across local builds and the GitHub release workflow.
+
 Build a local release APK from the Android project:
 
 ```bash
@@ -59,6 +66,30 @@ Build an ARM64-only APK:
 ```bash
 cd android
 ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+```
+
+To let a local APK upgrade the GitHub release APK already installed on your device, build with the same release keystore used by the workflow:
+
+```bash
+export VPLAYER_RELEASE_STORE_FILE=/absolute/path/to/vplayer-release.keystore
+export VPLAYER_RELEASE_STORE_PASSWORD=...
+export VPLAYER_RELEASE_KEY_ALIAS=...
+export VPLAYER_RELEASE_KEY_PASSWORD=...
+
+cd android
+./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+```
+
+Without those signing values, local `assembleRelease` falls back to the debug keystore, and Android will not install it over a release-signed GitHub build.
+
+If you need to override the computed version for a one-off build, pass the same properties the workflow understands:
+
+```bash
+cd android
+./gradlew assembleRelease \
+  -PVPLAYER_VERSION_NAME=1.0.2 \
+  -PVPLAYER_VERSION_CODE=123 \
+  -PreactNativeArchitectures=arm64-v8a
 ```
 
 Before running Gradle locally, make sure Android SDK and JDK 17 are configured. You can either set `ANDROID_HOME` / `ANDROID_SDK_ROOT`, or create `android/local.properties` with:
