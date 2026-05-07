@@ -1014,6 +1014,33 @@ function LibraryView({
   onPlayVideo,
   onToggleVideoSelection,
 }: LibraryViewProps) {
+  const openSwipeRowRef = useRef<{ close: () => void; uri: string } | null>(null);
+
+  const closeOpenSwipeRow = useCallback(() => {
+    openSwipeRowRef.current?.close();
+    openSwipeRowRef.current = null;
+  }, []);
+
+  const handleSwipeableOpen = useCallback((uri: string, close: () => void) => {
+    if (openSwipeRowRef.current?.uri && openSwipeRowRef.current.uri !== uri) {
+      openSwipeRowRef.current.close();
+    }
+
+    openSwipeRowRef.current = { close, uri };
+  }, []);
+
+  const handleSwipeableClose = useCallback((uri: string) => {
+    if (openSwipeRowRef.current?.uri === uri) {
+      openSwipeRowRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectionMode) {
+      closeOpenSwipeRow();
+    }
+  }, [closeOpenSwipeRow, selectionMode]);
+
   const renderItem = useCallback(
     ({ item: video }: { item: LibraryItem }) => (
       <VideoCard
@@ -1049,9 +1076,13 @@ function LibraryView({
 
           onPlayVideo(video.uri);
         }}
+        onSwipeableClose={() => handleSwipeableClose(video.uri)}
+        onSwipeableOpen={(close) => handleSwipeableOpen(video.uri, close)}
       />
     ),
     [
+      handleSwipeableClose,
+      handleSwipeableOpen,
       onDeleteVideo,
       onLongPressVideo,
       onOpenFolder,
@@ -1098,6 +1129,7 @@ function LibraryView({
       </View>
 
       <FlatList
+        onScrollBeginDrag={closeOpenSwipeRow}
         contentContainerStyle={[styles.libraryList, videos.length === 0 && styles.libraryListEmpty]}
         data={videos}
         keyExtractor={(item) => item.id}

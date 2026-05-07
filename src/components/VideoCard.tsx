@@ -13,6 +13,8 @@ type VideoCardProps = {
   onDelete: () => void;
   onLongPress: () => void;
   onPlay: () => void;
+  onSwipeableClose?: () => void;
+  onSwipeableOpen?: (close: () => void) => void;
   savedPositionSeconds?: number;
   selected: boolean;
   selectionMode: boolean;
@@ -26,6 +28,8 @@ export function VideoCard({
   onDelete,
   onLongPress,
   onPlay,
+  onSwipeableClose,
+  onSwipeableOpen,
   savedPositionSeconds,
   selected,
   selectionMode,
@@ -140,11 +144,25 @@ export function VideoCard({
     return renderCardContent();
   }
 
+  function closeSwipeable() {
+    swipeableRef.current?.close();
+  }
+
   return (
     <Swipeable
       ref={swipeableRef}
       containerStyle={styles.swipeableContainer}
       friction={2}
+      onSwipeableClose={(direction) => {
+        if (direction === 'right') {
+          onSwipeableClose?.();
+        }
+      }}
+      onSwipeableWillOpen={(direction) => {
+        if (direction === 'right') {
+          onSwipeableOpen?.(closeSwipeable);
+        }
+      }}
       overshootRight={false}
       renderRightActions={renderRightActions}
       rightThreshold={40}
