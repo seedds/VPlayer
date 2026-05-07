@@ -215,6 +215,7 @@ const styles = StyleSheet.create({
     width: '100%',
     paddingHorizontal: 16,
     paddingVertical: 10,
+    backgroundColor: '#fff8f1',
     borderBottomWidth: 1,
     borderBottomColor: '#ddcfbf',
   },
@@ -226,7 +227,6 @@ const styles = StyleSheet.create({
   },
   swipeableContainer: {
     width: '100%',
-    backgroundColor: '#c84630',
   },
   primaryAction: {
     flex: 1,
