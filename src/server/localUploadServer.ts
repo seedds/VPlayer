@@ -614,6 +614,16 @@ class LocalUploadServer {
         throw new Error('Upload is incomplete.');
       }
 
+      const existingTargetInfo = await FileSystem.getInfoAsync(session.finalUri);
+
+      if (existingTargetInfo.exists) {
+        if (existingTargetInfo.isDirectory) {
+          throw new Error('A folder with that name already exists.');
+        }
+
+        await FileSystem.deleteAsync(session.finalUri, { idempotent: true });
+      }
+
       await FileSystem.moveAsync({
         from: session.tempUri,
         to: session.finalUri,

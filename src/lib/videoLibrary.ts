@@ -192,31 +192,15 @@ export async function createUploadTarget(relativePath: string): Promise<{
     await FileSystem.makeDirectoryAsync(getDirectoryUri(parentPath), { intermediates: true });
   }
 
-  const extension = getFileExtension(sanitizedName);
-  const rawBaseName = sanitizedName.slice(0, sanitizedName.length - extension.length);
-  let counter = 0;
+  const uploadKey = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  while (true) {
-    const suffix = counter === 0 ? '' : `-${counter}`;
-    const candidateName = `${rawBaseName}${suffix}${extension}`;
-    const candidateRelativePath = joinRelativePath(parentPath, candidateName);
-    const candidateUri = getItemUri(candidateRelativePath);
-    const info = await FileSystem.getInfoAsync(candidateUri);
-
-    if (!info.exists) {
-      const uploadKey = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-      return {
-        fileName: candidateName,
-        finalUri: candidateUri,
-        parentPath,
-        relativePath: candidateRelativePath,
-        tempUri: `${getTempUploadDirectory()}${uploadKey}.upload`,
-      };
-    }
-
-    counter += 1;
-  }
+  return {
+    fileName: sanitizedName,
+    finalUri: getItemUri(normalizedPath),
+    parentPath,
+    relativePath: normalizedPath,
+    tempUri: `${getTempUploadDirectory()}${uploadKey}.upload`,
+  };
 }
 
 export async function listLibraryItems(parentPath: string | null = null): Promise<LibraryItem[]> {
