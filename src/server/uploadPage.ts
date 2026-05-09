@@ -1268,7 +1268,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           return;
         }
 
-        const destinationPath = enteredPath.trim().replace(/^\/+|\/+$/g, '');
+        const destinationPath = splitPath(enteredPath.trim()).join('/');
         movingSelection = true;
         updateSelectionButtons();
         setLibraryFeedback('Moving selected items...', null);
