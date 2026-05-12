@@ -34,7 +34,6 @@ const SUBTITLE_OUTLINE_OFFSETS = [
 ] as const;
 
 const BACKGROUND_DOUBLE_TAP_DELAY_MS = 250;
-const HOLD_TO_BOOST_DELAY_MS = 300;
 const SCRUB_PREVIEW_DEDUPE_THRESHOLD_SECONDS = 0.05;
 const SCRUB_PREVIEW_POPUP_WIDTH = 160;
 const SCRUB_PREVIEW_POPUP_HEIGHT = 90;
@@ -98,15 +97,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const currentDurationRef = useRef<number>(0);
   const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backgroundTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const holdToBoostTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewRequestInFlightRef = useRef(false);
   const previewThumbnailRequestIdRef = useRef(0);
   const lastBackgroundTapTimestampRef = useRef(0);
   const lastBackgroundTapTouchCountRef = useRef(0);
   const backgroundGestureTouchCountRef = useRef(0);
-  const holdToBoostRestoreRateRef = useRef(1);
-  const holdToBoostActiveRef = useRef(false);
-  const holdToBoostConsumedRef = useRef(false);
   const lastPersistedPositionRef = useRef(0);
   const queuedPreviewTimeRef = useRef<number | null>(null);
   const lastPreviewedTimeRef = useRef<number | null>(null);
@@ -118,7 +113,6 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const scrubTimeRef = useRef(0);
 
   useEffect(() => {
-    cancelHoldToBoostGesture();
     activeVideoUriRef.current = video.uri;
     playbackInterruptedRef.current = false;
     lastPersistedPositionRef.current = 0;
@@ -179,36 +173,6 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     }
   }
 
-  function clearHoldToBoostTimer() {
-    if (holdToBoostTimeoutRef.current) {
-      clearTimeout(holdToBoostTimeoutRef.current);
-      holdToBoostTimeoutRef.current = null;
-    }
-  }
-
-  function restorePlaybackRateAfterHold() {
-    if (!holdToBoostActiveRef.current) {
-      return;
-    }
-
-    holdToBoostActiveRef.current = false;
-    player.playbackRate = holdToBoostRestoreRateRef.current;
-  }
-
-  function cancelHoldToBoostGesture() {
-    clearHoldToBoostTimer();
-    holdToBoostConsumedRef.current = false;
-    restorePlaybackRateAfterHold();
-  }
-
-  function completeHoldToBoostGesture() {
-    clearHoldToBoostTimer();
-    const consumed = holdToBoostConsumedRef.current;
-    holdToBoostConsumedRef.current = false;
-    restorePlaybackRateAfterHold();
-    return consumed;
-  }
-
   function restartAutoHideTimer(shouldAutoHide: boolean) {
     clearAutoHideTimer();
 
@@ -250,8 +214,6 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
         backgroundTapTimeoutRef.current = null;
       }
 
-      cancelHoldToBoostGesture();
-
       lastBackgroundTapTouchCountRef.current = 0;
       backgroundGestureTouchCountRef.current = 0;
       previewRequestInFlightRef.current = false;
@@ -264,7 +226,6 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     const handlePlaybackInterruption = () => {
       playbackInterruptedRef.current = true;
       appHasFocusRef.current = false;
-      cancelHoldToBoostGesture();
       clearScrubPreview();
       setIsScrubbing(false);
       setIsControlsLocked(false);
@@ -502,12 +463,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
   function updatePlaybackRate(nextRate: number) {
     const normalizedRate = clampPlaybackRate(nextRate);
-    holdToBoostRestoreRateRef.current = normalizedRate;
-
-    if (!holdToBoostActiveRef.current) {
-      player.playbackRate = normalizedRate;
-    }
-
+    player.playbackRate = normalizedRate;
     setPlaybackRate(normalizedRate);
     showControls();
   }
@@ -667,49 +623,16 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   function handleBackgroundResponderGrant(event: GestureResponderEvent) {
     updateBackgroundGestureTouchCount(event);
     clearAutoHideTimer();
-
-    clearHoldToBoostTimer();
-    holdToBoostConsumedRef.current = false;
-
-    const touchCount = Math.max(event.nativeEvent.touches.length, event.nativeEvent.changedTouches.length);
-
-    if (isScrubbing || touchCount !== 1) {
-      return;
-    }
-
-    holdToBoostTimeoutRef.current = setTimeout(() => {
-      holdToBoostTimeoutRef.current = null;
-      holdToBoostConsumedRef.current = true;
-
-      if (!player.playing) {
-        return;
-      }
-
-      holdToBoostActiveRef.current = true;
-      player.playbackRate = MAX_PLAYBACK_RATE;
-    }, HOLD_TO_BOOST_DELAY_MS);
   }
 
   function handleBackgroundResponderTouchStart(event: GestureResponderEvent) {
     updateBackgroundGestureTouchCount(event);
-
-    const touchCount = Math.max(event.nativeEvent.touches.length, event.nativeEvent.changedTouches.length);
-
-    if (touchCount > 1) {
-      cancelHoldToBoostGesture();
-      resumeAutoHideAfterBackgroundGesture();
-    }
   }
 
   function handleVisibleBackgroundResponderRelease(event: GestureResponderEvent) {
     updateBackgroundGestureTouchCount(event);
     const touchCount = backgroundGestureTouchCountRef.current || 1;
     resetBackgroundGestureTouchCount();
-
-    if (completeHoldToBoostGesture()) {
-      resumeAutoHideAfterBackgroundGesture();
-      return;
-    }
 
     handleBackgroundTap(handleHideControls, touchCount);
     resumeAutoHideAfterBackgroundGesture();
@@ -720,17 +643,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     const touchCount = backgroundGestureTouchCountRef.current || 1;
     resetBackgroundGestureTouchCount();
 
-    if (completeHoldToBoostGesture()) {
-      resumeAutoHideAfterBackgroundGesture();
-      return;
-    }
-
     handleBackgroundTap(handleToggleControls, touchCount);
     resumeAutoHideAfterBackgroundGesture();
   }
 
   function handleBackgroundResponderTerminate() {
-    cancelHoldToBoostGesture();
     resetBackgroundGestureTouchCount();
     resumeAutoHideAfterBackgroundGesture();
   }
