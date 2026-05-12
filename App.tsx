@@ -72,8 +72,18 @@ type MainTabParamList = {
 const INITIAL_ACTIVITY: UploadActivity = {
   status: 'idle',
   message: 'Starting local server...',
+  activeUploads: [],
   updatedAt: Date.now(),
 };
+
+function createUploadActivity(status: UploadActivity['status'], message: string): UploadActivity {
+  return {
+    status,
+    message,
+    activeUploads: [],
+    updatedAt: Date.now(),
+  };
+}
 
 const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
 const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
@@ -143,7 +153,7 @@ export default function App() {
   }, [selectedVideoUri, videoItems]);
   const selectedVideo = selectedIndex !== null ? videoItems[selectedIndex] ?? null : null;
   const selectedCount = selectedVideoUris.size;
-  const shouldKeepAwakeForUpload = activity.status === 'receiving';
+  const shouldKeepAwakeForUpload = activity.activeUploads.length > 0;
 
   useEffect(() => {
     playbackStateByUriRef.current = playbackStateByUri;
@@ -408,11 +418,7 @@ export default function App() {
       setPortInput(String(port));
       setActivePort(port);
       setServerRunning(true);
-      setActivity({
-        status: 'idle',
-        message: `Server ready on port ${port}.`,
-        updatedAt: Date.now(),
-      });
+      setActivity(createUploadActivity('idle', `Server ready on port ${port}.`));
       await refreshNetwork();
     },
     [refreshNetwork],
@@ -421,11 +427,7 @@ export default function App() {
   const startServer = useCallback(
     async (port: number) => {
       try {
-        setActivity({
-          status: 'idle',
-          message: `Starting server on port ${port}...`,
-          updatedAt: Date.now(),
-        });
+        setActivity(createUploadActivity('idle', `Starting server on port ${port}...`));
 
         const existingServer = await probeExistingServer(port);
 
@@ -454,11 +456,7 @@ export default function App() {
 
         setActivePort(null);
         setServerRunning(false);
-        setActivity({
-          status: 'error',
-          message: error instanceof Error ? error.message : 'Unable to start the server.',
-          updatedAt: Date.now(),
-        });
+        setActivity(createUploadActivity('error', error instanceof Error ? error.message : 'Unable to start the server.'));
       }
     },
     [adoptRunningServer, probeExistingServer, refreshLibrary],
@@ -528,11 +526,7 @@ export default function App() {
         await startServer(DEFAULT_SERVER_PORT);
       } catch (error) {
         if (isMounted) {
-          setActivity({
-            status: 'error',
-            message: error instanceof Error ? error.message : 'App startup failed.',
-            updatedAt: Date.now(),
-          });
+          setActivity(createUploadActivity('error', error instanceof Error ? error.message : 'App startup failed.'));
         }
       } finally {
         if (isMounted) {
@@ -1178,6 +1172,7 @@ function UploadView({
   setPortInput,
 }: UploadViewProps) {
   const serverDisplayUrl = serverUrl ?? (serverRunning ? 'Server is running. Discovering device IP...' : 'Server is stopped');
+  const activeUploadCount = activity.activeUploads.length;
 
   return (
     <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
@@ -1215,7 +1210,9 @@ function UploadView({
         </View>
 
         <View style={styles.activityMetaRow}>
-          <Text style={styles.supportText}>{activity.fileName ?? 'No active file'}</Text>
+          <Text style={styles.supportText}>
+            {activeUploadCount > 0 ? `${activeUploadCount} active upload${activeUploadCount === 1 ? '' : 's'}` : 'No active uploads'}
+          </Text>
           <Text style={styles.supportText}>
             {activity.totalBytes
               ? `${formatBytes(activity.receivedBytes ?? 0)} / ${formatBytes(activity.totalBytes)}`
@@ -1224,6 +1221,39 @@ function UploadView({
                 : 'Waiting for browser upload'}
           </Text>
         </View>
+
+        {activeUploadCount > 0 ? (
+          <View style={styles.activityList}>
+            {activity.activeUploads.map((upload) => {
+              const uploadProgress = getUploadProgress(upload);
+
+              return (
+                <View key={upload.uploadId} style={styles.activityItem}>
+                  <View style={styles.activityItemHeader}>
+                    <Text numberOfLines={1} style={styles.activityItemTitle}>
+                      {upload.fileName}
+                    </Text>
+                    <Text style={styles.activityItemTime}>{formatDate(upload.updatedAt)}</Text>
+                  </View>
+                  <Text style={styles.supportText}>{upload.message}</Text>
+                  <View style={styles.progressTrack}>
+                    <View style={[styles.progressFill, { width: `${uploadProgress * 100}%` }]} />
+                  </View>
+                  <View style={styles.activityMetaRow}>
+                    <Text style={styles.supportText}>
+                      {formatBytes(upload.receivedBytes)} / {formatBytes(upload.totalBytes)}
+                    </Text>
+                    <Text style={styles.supportText}>{`${Math.round(uploadProgress * 100)}%`}</Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.activityEmptyState}>
+            <Text style={styles.supportText}>No active uploads</Text>
+          </View>
+        )}
       </Panel>
     </ScrollView>
   );
@@ -1548,5 +1578,39 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
+  },
+  activityList: {
+    gap: 12,
+  },
+  activityItem: {
+    gap: 10,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#ead8c4',
+    backgroundColor: '#fffdf9',
+    padding: 14,
+  },
+  activityItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  activityItemTitle: {
+    flex: 1,
+    color: '#1d1917',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  activityItemTime: {
+    color: '#756a61',
+    fontSize: 12,
+  },
+  activityEmptyState: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#ead8c4',
+    backgroundColor: '#fffdf9',
+    padding: 14,
   },
 });

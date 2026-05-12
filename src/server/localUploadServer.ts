@@ -1,7 +1,7 @@
 import { File } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 
-import type { LibraryItem, UploadActivity, VideoItem } from '../lib/types';
+import type { ActiveUploadRow, LibraryItem, UploadActivity, UploadStatus, VideoItem } from '../lib/types';
 import { clearPlaybackProgressForUris } from '../lib/playbackState';
 import {
   clearTempUploads,
@@ -203,7 +203,7 @@ class LocalUploadServer {
     if (this.server && this.port === port) {
       this.onActivity = onActivity;
       this.onLibraryChanged = onLibraryChanged;
-      this.emit({ status: 'idle', message: `Server ready on port ${port}.` });
+      this.emitActivity('idle', `Server ready on port ${port}.`);
       return;
     }
 
@@ -234,7 +234,7 @@ class LocalUploadServer {
 
     this.server = nextServer;
     this.port = resolvedPort;
-    this.emit({ status: 'idle', message: `Server ready on port ${resolvedPort}.` });
+    this.emitActivity('idle', `Server ready on port ${resolvedPort}.`);
   }
 
   async stop(): Promise<void> {
@@ -251,11 +251,51 @@ class LocalUploadServer {
       activeUploads.map((upload) => FileSystem.deleteAsync(upload.tempUri, { idempotent: true }).catch(() => undefined)),
     );
 
-    this.emit({ status: 'stopped', message: 'Server stopped.' });
+    this.emitActivity('stopped', 'Server stopped.');
   }
 
   private emit(activity: Omit<UploadActivity, 'updatedAt'>): void {
     this.onActivity?.({ ...activity, updatedAt: Date.now() });
+  }
+
+  private buildUploadRows(updatedAt: number): ActiveUploadRow[] {
+    return Array.from(this.uploads.values()).map((session) => ({
+      uploadId: session.uploadId,
+      fileName: session.relativePath,
+      message: session.receivedBytes > 0 ? `Uploading ${session.fileName}` : `Preparing ${session.fileName}`,
+      updatedAt,
+      receivedBytes: Math.min(session.receivedBytes, session.totalSize),
+      totalBytes: session.totalSize,
+    }));
+  }
+
+  private buildActivity(statusWhenIdle: UploadStatus, messageWhenIdle: string): Omit<UploadActivity, 'updatedAt'> {
+    const updatedAt = Date.now();
+    const activeUploads = this.buildUploadRows(updatedAt);
+
+    if (activeUploads.length === 0) {
+      return {
+        status: statusWhenIdle,
+        message: messageWhenIdle,
+        activeUploads: [],
+      };
+    }
+
+    const receivedBytes = activeUploads.reduce((sum, upload) => sum + upload.receivedBytes, 0);
+    const totalBytes = activeUploads.reduce((sum, upload) => sum + upload.totalBytes, 0);
+    const isPreparingOnly = activeUploads.every((upload) => upload.receivedBytes === 0);
+
+    return {
+      status: 'receiving',
+      message: `${isPreparingOnly ? 'Preparing' : 'Uploading'} ${activeUploads.length} file${activeUploads.length === 1 ? '' : 's'}`,
+      activeUploads,
+      receivedBytes,
+      totalBytes,
+    };
+  }
+
+  private emitActivity(statusWhenIdle: UploadStatus, messageWhenIdle: string): void {
+    this.emit(this.buildActivity(statusWhenIdle, messageWhenIdle));
   }
 
   private async handleRequest(request: NitroRequestLike): Promise<NitroResponseLike> {
@@ -345,13 +385,7 @@ class LocalUploadServer {
         expectedChunkIndex: 0,
       });
 
-      this.emit({
-        status: 'receiving',
-        message: `Preparing ${target.fileName}`,
-        fileName: target.fileName,
-        receivedBytes: 0,
-        totalBytes: totalSize,
-      });
+      this.emitActivity('receiving', `Preparing ${target.fileName}`);
 
       return jsonResponse({
         uploadId,
@@ -381,7 +415,7 @@ class LocalUploadServer {
       const name = readString(body.name, 'name');
       const folder = await createLibraryFolder(parentPath || null, name);
 
-      this.emit({ status: 'idle', message: `Created folder ${folder.name}` });
+      this.emitActivity('idle', `Created folder ${folder.name}`);
       await this.onLibraryChanged?.();
 
       return jsonResponse({
@@ -419,7 +453,7 @@ class LocalUploadServer {
       }
 
       await deleteLibraryItem(target.uri);
-      this.emit({ status: 'idle', message: `Deleted ${target.name}` });
+      this.emitActivity('idle', `Deleted ${target.name}`);
       await this.onLibraryChanged?.();
 
       return jsonResponse({
@@ -472,7 +506,7 @@ class LocalUploadServer {
         await this.cleanupPlaybackArtifacts(videosToCleanup);
       }
 
-      this.emit({ status: 'idle', message: `Renamed ${target.name} to ${renamed.name}` });
+      this.emitActivity('idle', `Renamed ${target.name} to ${renamed.name}`);
       await this.onLibraryChanged?.();
 
       return jsonResponse({
@@ -521,7 +555,7 @@ class LocalUploadServer {
         }
       }
 
-      this.emit({ status: 'idle', message: `Moved ${movedCount} item${movedCount === 1 ? '' : 's'}` });
+      this.emitActivity('idle', `Moved ${movedCount} item${movedCount === 1 ? '' : 's'}`);
       await this.onLibraryChanged?.();
 
       return jsonResponse({
@@ -582,13 +616,7 @@ class LocalUploadServer {
       session.expectedChunkIndex += 1;
       uploadedChunkFile.delete();
 
-      this.emit({
-        status: 'receiving',
-        message: `Uploading ${session.fileName}`,
-        fileName: session.fileName,
-        receivedBytes: Math.min(session.receivedBytes, session.totalSize),
-        totalBytes: session.totalSize,
-      });
+      this.emitActivity('receiving', `Uploading ${session.fileName}`);
 
       return jsonResponse({
         ok: true,
@@ -630,13 +658,7 @@ class LocalUploadServer {
       });
 
       this.uploads.delete(uploadId);
-      this.emit({
-        status: 'complete',
-        message: `Saved ${session.relativePath}`,
-        fileName: session.relativePath,
-        receivedBytes: session.receivedBytes,
-        totalBytes: session.totalSize,
-      });
+      this.emitActivity('complete', `Saved ${session.relativePath}`);
 
       await this.onLibraryChanged?.();
       return jsonResponse({ ok: true, fileName: session.fileName });
@@ -654,13 +676,7 @@ class LocalUploadServer {
       if (session) {
         this.uploads.delete(uploadId);
         await FileSystem.deleteAsync(session.tempUri, { idempotent: true });
-        this.emit({
-          status: 'error',
-          message: `Cancelled ${session.fileName}`,
-          fileName: session.fileName,
-          receivedBytes: session.receivedBytes,
-          totalBytes: session.totalSize,
-        });
+        this.emitActivity('error', `Cancelled ${session.fileName}`);
       }
 
       return jsonResponse({ ok: true });

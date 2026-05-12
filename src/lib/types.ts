@@ -33,10 +33,20 @@ export type LibraryItem = FolderItem | VideoItem | SubtitleItem | FileItem;
 
 export type UploadStatus = 'idle' | 'receiving' | 'complete' | 'error' | 'stopped';
 
+export type ActiveUploadRow = {
+  uploadId: string;
+  fileName: string;
+  message: string;
+  updatedAt: number;
+  receivedBytes: number;
+  totalBytes: number;
+};
+
 export type UploadActivity = {
   status: UploadStatus;
   message: string;
   updatedAt: number;
+  activeUploads: ActiveUploadRow[];
   fileName?: string;
   receivedBytes?: number;
   totalBytes?: number;

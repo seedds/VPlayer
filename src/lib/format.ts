@@ -1,5 +1,11 @@
 import type { UploadActivity } from './types';
 
+type UploadProgressLike = {
+  receivedBytes?: number;
+  status?: UploadActivity['status'];
+  totalBytes?: number;
+};
+
 export function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {
     return '0 B';
@@ -44,7 +50,7 @@ export function normalizePort(value: string, fallback: number): number {
   return parsed;
 }
 
-export function getUploadProgress(activity: UploadActivity): number {
+export function getUploadProgress(activity: UploadProgressLike): number {
   if (!activity.totalBytes || !activity.receivedBytes) {
     return activity.status === 'complete' ? 1 : 0;
   }
