@@ -556,6 +556,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       const refreshButton = document.getElementById('refresh-button');
       const newFolderButton = document.getElementById('new-folder-button');
       const defaultChunkSize = ${chunkSize};
+      const MAX_PARALLEL_UPLOADS = 3;
       let currentPath = '';
       let currentLibraryItems = [];
       let selectedLibraryPaths = new Set();
@@ -566,6 +567,9 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       let dragDepth = 0;
       let totalFilesInBatch = 0;
       let completedFilesInBatch = 0;
+      let pendingUploads = [];
+      let queueRunning = false;
+      const activeUploadSpeeds = new Map();
 
       function setPickerState(text) {
         pickerState.textContent = text;
@@ -666,8 +670,57 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       }
 
       function updateBatchStatus(speedBytesPerSecond) {
+        const totalSpeed = Array.from(activeUploadSpeeds.values()).reduce((sum, value) => sum + value, 0);
         batchProgress.textContent = completedFilesInBatch + '/' + totalFilesInBatch;
-        batchSpeed.textContent = formatSpeed(speedBytesPerSecond);
+        batchSpeed.textContent = formatSpeed(totalSpeed);
+      }
+
+      function updateQueuePickerState() {
+        const activeCount = activeUploadSpeeds.size;
+        const queuedCount = pendingUploads.length;
+
+        if (activeCount > 0) {
+          const uploadingLabel = 'Uploading ' + activeCount + ' file' + (activeCount === 1 ? '' : 's') + '...';
+          setPickerState(queuedCount > 0 ? uploadingLabel + ' ' + queuedCount + ' queued.' : uploadingLabel);
+          return;
+        }
+
+        if (queuedCount > 0) {
+          setPickerState('Queued ' + queuedCount + ' file' + (queuedCount === 1 ? '' : 's') + '...');
+          return;
+        }
+
+        if (totalFilesInBatch > 0 && completedFilesInBatch >= totalFilesInBatch) {
+          setPickerState('Done. You can upload more files.');
+          return;
+        }
+
+        setPickerState('Ready for new uploads.');
+      }
+
+      function beginUploadActivity(card) {
+        activeUploadSpeeds.set(card, 0);
+        updateBatchStatus(0);
+        updateQueuePickerState();
+      }
+
+      function updateUploadActivity(card, speedBytesPerSecond) {
+        if (!activeUploadSpeeds.has(card)) {
+          return;
+        }
+
+        activeUploadSpeeds.set(card, Math.max(0, speedBytesPerSecond || 0));
+        updateBatchStatus(0);
+      }
+
+      function endUploadActivity(card) {
+        activeUploadSpeeds.delete(card);
+        updateBatchStatus(0);
+        updateQueuePickerState();
+      }
+
+      function isQueueIdle() {
+        return !queueRunning && pendingUploads.length === 0 && activeUploadSpeeds.size === 0;
       }
 
       function createUploadCard(file, relativePath) {
@@ -1055,6 +1108,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         const startedAt = performance.now();
 
         card.querySelector('.upload-name').textContent = savedRelativePath;
+        beginUploadActivity(card);
 
         try {
           for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
@@ -1089,16 +1143,77 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
               fileSpec.file.size > 0 ? (uploadedBytes / fileSpec.file.size) * 100 : 100,
               formatBytes(uploadedBytes) + ' / ' + formatBytes(fileSpec.file.size),
             );
-            updateBatchStatus(speedBytesPerSecond);
+            updateUploadActivity(card, speedBytesPerSecond);
           }
 
           await postJson('/upload/complete', { uploadId });
           updateCard(card, 'Saved to phone', 100, savedRelativePath === fileSpec.relativePath ? formatBytes(fileSpec.file.size) : 'Saved as ' + savedRelativePath);
-          updateBatchStatus(0);
         } catch (error) {
           await postJson('/upload/cancel', { uploadId }).catch(() => undefined);
-          updateBatchStatus(0);
           throw error;
+        } finally {
+          endUploadActivity(card);
+        }
+      }
+
+      async function runUploadWorker() {
+        while (true) {
+          const nextUpload = pendingUploads.shift();
+
+          if (!nextUpload) {
+            updateQueuePickerState();
+            return;
+          }
+
+          try {
+            await uploadFile(nextUpload.fileSpec, nextUpload.card);
+          } catch (error) {
+            updateCard(nextUpload.card, 'Upload failed', 0, error.message || 'Unknown error');
+          } finally {
+            completedFilesInBatch += 1;
+            updateBatchStatus(0);
+            updateQueuePickerState();
+          }
+        }
+      }
+
+      async function runUploadQueue() {
+        if (queueRunning) {
+          return;
+        }
+
+        if (pendingUploads.length === 0) {
+          updateQueuePickerState();
+          return;
+        }
+
+        queueRunning = true;
+        updateQueuePickerState();
+
+        try {
+          const workerCount = Math.min(MAX_PARALLEL_UPLOADS, pendingUploads.length);
+          await Promise.all(Array.from({ length: workerCount }, () => runUploadWorker()));
+        } finally {
+          fileInput.value = '';
+          folderInput.value = '';
+
+          if (pendingUploads.length === 0 && activeUploadSpeeds.size === 0) {
+            await loadLibrary(currentPath).catch((error) => {
+              const message = error && error.message ? error.message : 'Unable to load library.';
+              setPickerState(message);
+              setLibraryFeedback(message, 'error');
+              renderLibraryMessage(message, 'error');
+            });
+          }
+
+          queueRunning = false;
+
+          if (pendingUploads.length > 0) {
+            void runUploadQueue();
+            return;
+          }
+
+          updateQueuePickerState();
         }
       }
 
@@ -1109,33 +1224,26 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
           return;
         }
 
-        pickButton.disabled = true;
-        pickFolderButton.disabled = true;
-        totalFilesInBatch = files.length;
-        completedFilesInBatch = 0;
-        updateBatchStatus(0);
-        setPickerState('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '...');
-
-        for (const fileSpec of files) {
-          const card = createUploadCard(fileSpec.file, fileSpec.relativePath);
-
-          try {
-            await uploadFile(fileSpec, card);
-            completedFilesInBatch += 1;
-            updateBatchStatus(0);
-          } catch (error) {
-            updateCard(card, 'Upload failed', 0, error.message || 'Unknown error');
-            updateBatchStatus(0);
-          }
-        }
-
-        pickButton.disabled = false;
-        pickFolderButton.disabled = false;
         fileInput.value = '';
         folderInput.value = '';
+
+        if (isQueueIdle()) {
+          totalFilesInBatch = 0;
+          completedFilesInBatch = 0;
+          activeUploadSpeeds.clear();
+        }
+
+        for (const fileSpec of files) {
+          pendingUploads.push({
+            fileSpec,
+            card: createUploadCard(fileSpec.file, fileSpec.relativePath),
+          });
+        }
+
+        totalFilesInBatch += files.length;
         updateBatchStatus(0);
-        setPickerState('Done. You can upload more files.');
-        await loadLibrary(currentPath);
+        updateQueuePickerState();
+        await runUploadQueue();
       }
 
       function toFileSpec(file, relativePath) {
@@ -1351,16 +1459,12 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       fileInput.addEventListener('change', () => {
         const fileSpecs = Array.from(fileInput.files || []).map((file) => toFileSpec(file, file.name));
         handleSelection(fileSpecs).catch((error) => {
-          pickButton.disabled = false;
-          pickFolderButton.disabled = false;
           setPickerState(error.message || 'Upload failed.');
         });
       });
       folderInput.addEventListener('change', () => {
         const fileSpecs = Array.from(folderInput.files || []).map((file) => toFileSpec(file, file.webkitRelativePath || file.name));
         handleSelection(fileSpecs).catch((error) => {
-          pickButton.disabled = false;
-          pickFolderButton.disabled = false;
           setPickerState(error.message || 'Upload failed.');
         });
       });
@@ -1396,7 +1500,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         dragDepth = Math.max(0, dragDepth - 1);
         if (dragDepth === 0) {
           setDragActive(false);
-          setPickerState('Ready for new uploads.');
+          updateQueuePickerState();
         }
       });
 
@@ -1412,8 +1516,6 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
         collectDroppedFiles(event.dataTransfer)
           .then((fileSpecs) => handleSelection(fileSpecs))
           .catch((error) => {
-            pickButton.disabled = false;
-            pickFolderButton.disabled = false;
             setPickerState(error.message || 'Upload failed.');
           });
       });

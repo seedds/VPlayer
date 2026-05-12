@@ -112,7 +112,7 @@ export default function App() {
   const [videos, setVideos] = useState<LibraryItem[]>([]);
   const [playbackStateByUri, setPlaybackStateByUri] = useState<PlaybackStateMap>({});
   const [thumbnailSourceByUri, setThumbnailSourceByUri] = useState<Record<string, ThumbnailSource | null | undefined>>({});
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [selectedVideoUri, setSelectedVideoUri] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedVideoUris, setSelectedVideoUris] = useState<Set<string>>(() => new Set());
   const [currentFolderPath, setCurrentFolderPath] = useState<string | null>(null);
@@ -133,6 +133,14 @@ export default function App() {
   const progress = getUploadProgress(activity);
   const serverUrl = serverRunning && ipAddress && activePort ? `http://${ipAddress}:${activePort}` : null;
   const videoItems = useMemo(() => getVideoItems(videos), [videos]);
+  const selectedIndex = useMemo(() => {
+    if (!selectedVideoUri) {
+      return null;
+    }
+
+    const index = videoItems.findIndex((video) => video.uri === selectedVideoUri);
+    return index >= 0 ? index : null;
+  }, [selectedVideoUri, videoItems]);
   const selectedVideo = selectedIndex !== null ? videoItems[selectedIndex] ?? null : null;
   const selectedCount = selectedVideoUris.size;
   const shouldKeepAwakeForUpload = activity.status === 'receiving';
@@ -463,12 +471,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (selectedIndex !== null && selectedIndex >= videoItems.length) {
-      setSelectedIndex(videoItems.length > 0 ? videoItems.length - 1 : null);
-    }
-  }, [selectedIndex, videoItems.length]);
-
-  useEffect(() => {
     setSelectedVideoUris((current) => {
       if (current.size === 0) {
         return current;
@@ -593,17 +595,20 @@ export default function App() {
 
   const handlePlayVideo = useCallback(
     (uri: string) => {
-      const index = videoItems.findIndex((video) => video.uri === uri);
+      setSelectedVideoUri(uri);
 
-      if (index >= 0) {
-        setSelectedIndex(index);
-
-        if (navigationRef.isReady()) {
-          navigationRef.navigate('Player');
-        }
+      if (navigationRef.isReady()) {
+        navigationRef.navigate('Player');
       }
     },
-    [navigationRef, videoItems],
+    [navigationRef],
+  );
+
+  const handleSelectVideoIndex = useCallback(
+    (index: number) => {
+      setSelectedVideoUri(videoItems[index]?.uri ?? null);
+    },
+    [videoItems],
   );
 
   const handleCancelSelection = useCallback(() => {
@@ -769,14 +774,14 @@ export default function App() {
   }, [refreshLibrary, refreshNetwork]);
 
   useEffect(() => {
-    if (selectedIndex === null || selectedVideo || !navigationRef.isReady()) {
+    if (selectedVideoUri === null || selectedVideo || !navigationRef.isReady()) {
       return;
     }
 
     if (navigationRef.canGoBack()) {
       navigationRef.goBack();
     }
-  }, [navigationRef, selectedIndex, selectedVideo]);
+  }, [navigationRef, selectedVideo, selectedVideoUri]);
 
   useEffect(() => {
     if (!serverRunning || ipAddress || loading) {
@@ -941,7 +946,7 @@ export default function App() {
               name="Player"
               listeners={{
                 beforeRemove: () => {
-                  setSelectedIndex(null);
+                  setSelectedVideoUri(null);
                   void refreshLibrary();
                 },
               }}
@@ -957,7 +962,7 @@ export default function App() {
                     onClose={() => {
                       navigation.goBack();
                     }}
-                    onSelectIndex={setSelectedIndex}
+                    onSelectIndex={handleSelectVideoIndex}
                   />
                 ) : null
               }
