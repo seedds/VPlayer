@@ -29,6 +29,12 @@ import { VideoCard } from './src/components/VideoCard';
 import { isAndroidTabletLayout } from './src/lib/device';
 import { formatBytes, formatDate, getUploadProgress, normalizePort } from './src/lib/format';
 import {
+  clampMaxParallelUploads,
+  DEFAULT_MAX_PARALLEL_UPLOADS,
+  getUploadSettings,
+  saveUploadSettings,
+} from './src/lib/uploadSettings';
+import {
   clearAllPlaybackProgress,
   clearPlaybackProgressForUris,
   getAllPlaybackState,
@@ -66,6 +72,7 @@ type RootStackParamList = {
 
 type MainTabParamList = {
   Library: undefined;
+  Settings: undefined;
   Upload: undefined;
 };
 
@@ -87,6 +94,7 @@ function createUploadActivity(status: UploadActivity['status'], message: string)
 
 const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
 const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
+const UPLOAD_CONCURRENCY_OPTIONS = [1, 2, 3, 4, 5] as const;
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const MainTab = createBottomTabNavigator<MainTabParamList>();
@@ -133,10 +141,12 @@ export default function App() {
   const [libraryRevision, setLibraryRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [portInput, setPortInput] = useState(String(DEFAULT_SERVER_PORT));
+  const [maxParallelUploads, setMaxParallelUploads] = useState(DEFAULT_MAX_PARALLEL_UPLOADS);
   const playbackStateByUriRef = useRef<PlaybackStateMap>({});
   const thumbnailSourceByUriRef = useRef<Record<string, ThumbnailSource | null | undefined>>({});
   const thumbnailJobUrisRef = useRef<Set<string>>(new Set());
   const currentFolderPathRef = useRef<string | null>(null);
+  const maxParallelUploadsRef = useRef(DEFAULT_MAX_PARALLEL_UPLOADS);
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
 
   const isAndroidTablet = useMemo(() => isAndroidTabletLayout(width, height), [height, width]);
@@ -166,6 +176,11 @@ export default function App() {
   useEffect(() => {
     currentFolderPathRef.current = currentFolderPath;
   }, [currentFolderPath]);
+
+  useEffect(() => {
+    maxParallelUploadsRef.current = maxParallelUploads;
+    localUploadServer.setMaxParallelUploads(maxParallelUploads);
+  }, [maxParallelUploads]);
 
   const refreshLibrary = useCallback(async (path: string | null = currentFolderPathRef.current) => {
     async function loadPath(targetPath: string | null): Promise<void> {
@@ -425,7 +440,7 @@ export default function App() {
   );
 
   const startServer = useCallback(
-    async (port: number) => {
+    async (port: number, configuredMaxParallelUploads = maxParallelUploadsRef.current) => {
       try {
         setActivity(createUploadActivity('idle', `Starting server on port ${port}...`));
 
@@ -437,6 +452,7 @@ export default function App() {
         }
 
         await localUploadServer.start({
+          maxParallelUploads: configuredMaxParallelUploads,
           port,
           onActivity: setActivity,
           onLibraryChanged: refreshLibrary,
@@ -513,6 +529,14 @@ export default function App() {
 
     async function bootstrap() {
       try {
+        const settings = await getUploadSettings();
+        maxParallelUploadsRef.current = settings.maxParallelUploads;
+        localUploadServer.setMaxParallelUploads(settings.maxParallelUploads);
+
+        if (isMounted) {
+          setMaxParallelUploads(settings.maxParallelUploads);
+        }
+
         await ensureAppDirectories();
         await refreshLibrary();
         void refreshNetwork();
@@ -523,7 +547,7 @@ export default function App() {
 
         setLoading(false);
 
-        await startServer(DEFAULT_SERVER_PORT);
+        await startServer(DEFAULT_SERVER_PORT, settings.maxParallelUploads);
       } catch (error) {
         if (isMounted) {
           setActivity(createUploadActivity('error', error instanceof Error ? error.message : 'App startup failed.'));
@@ -699,6 +723,24 @@ export default function App() {
       ],
     );
   }, [getCleanupVideos, handleCancelSelection, refreshLibrary, selectedVideoUris, videos]);
+
+  const handleSelectMaxParallelUploads = useCallback(
+    async (value: number) => {
+      const nextValue = clampMaxParallelUploads(value);
+
+      if (nextValue === maxParallelUploads) {
+        return;
+      }
+
+      try {
+        await saveUploadSettings({ maxParallelUploads: nextValue });
+        setMaxParallelUploads(nextValue);
+      } catch (error) {
+        Alert.alert('Save failed', error instanceof Error ? error.message : 'Could not save upload settings.');
+      }
+    },
+    [maxParallelUploads],
+  );
 
   useEffect(() => {
     if (loading) {
@@ -926,6 +968,34 @@ export default function App() {
                                 serverRunning={serverRunning}
                                 serverUrl={serverUrl}
                                 setPortInput={setPortInput}
+                              />
+                            )}
+                          </View>
+                        </View>
+                      </SafeAreaView>
+                    )}
+                  </MainTab.Screen>
+                  <MainTab.Screen
+                    name="Settings"
+                    listeners={{
+                      focus: () => {
+                        handleCancelSelection();
+                      },
+                    }}
+                  >
+                    {() => (
+                      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+                        <View style={styles.screen}>
+                          <View style={styles.contentArea}>
+                            {loading ? (
+                              <View style={styles.loadingCard}>
+                                <ActivityIndicator size="large" color="#1f6f68" />
+                                <Text style={styles.loadingText}>Preparing storage, network, and local upload server...</Text>
+                              </View>
+                            ) : (
+                              <SettingsView
+                                maxParallelUploads={maxParallelUploads}
+                                onSelectMaxParallelUploads={(value) => void handleSelectMaxParallelUploads(value)}
                               />
                             )}
                           </View>
@@ -1259,6 +1329,44 @@ function UploadView({
   );
 }
 
+type SettingsViewProps = {
+  maxParallelUploads: number;
+  onSelectMaxParallelUploads: (value: number) => void;
+};
+
+function SettingsView({ maxParallelUploads, onSelectMaxParallelUploads }: SettingsViewProps) {
+  return (
+    <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
+      <Panel title="Upload settings" subtitle="Control how many files the browser uploader sends at once.">
+        <View style={styles.settingSection}>
+          <Text style={styles.settingTitle}>Concurrent uploads</Text>
+          <Text style={styles.supportText}>Choose how many files the browser uploader can send in parallel.</Text>
+          <View style={styles.settingOptionGrid}>
+            {UPLOAD_CONCURRENCY_OPTIONS.map((value) => {
+              const selected = value === maxParallelUploads;
+
+              return (
+                <Pressable
+                  key={value}
+                  onPress={() => onSelectMaxParallelUploads(value)}
+                  style={({ pressed }) => [
+                    styles.settingOptionButton,
+                    selected && styles.settingOptionButtonSelected,
+                    pressed && styles.settingOptionButtonPressed,
+                  ]}
+                >
+                  <Text style={[styles.settingOptionText, selected && styles.settingOptionTextSelected]}>{value}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={styles.supportText}>Refresh the browser upload page to apply changes.</Text>
+        </View>
+      </Panel>
+    </ScrollView>
+  );
+}
+
 type PanelProps = {
   children: ReactNode;
   subtitle: string;
@@ -1486,6 +1594,44 @@ const styles = StyleSheet.create({
   panelBody: {
     marginTop: 16,
     gap: 14,
+  },
+  settingSection: {
+    gap: 14,
+  },
+  settingTitle: {
+    color: '#1d1917',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  settingOptionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  settingOptionButton: {
+    minWidth: 56,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#dfcfbd',
+    backgroundColor: '#fffdf9',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  settingOptionButtonSelected: {
+    borderColor: '#1f6f68',
+    backgroundColor: '#dceeea',
+  },
+  settingOptionButtonPressed: {
+    opacity: 0.8,
+  },
+  settingOptionText: {
+    color: '#4f463f',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  settingOptionTextSelected: {
+    color: '#1f6f68',
   },
   serverStatusLabel: {
     color: '#1d1917',

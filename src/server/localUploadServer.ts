@@ -2,6 +2,7 @@ import { File } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import type { ActiveUploadRow, LibraryItem, UploadActivity, UploadStatus, VideoItem } from '../lib/types';
+import { clampMaxParallelUploads, DEFAULT_MAX_PARALLEL_UPLOADS } from '../lib/uploadSettings';
 import { clearPlaybackProgressForUris } from '../lib/playbackState';
 import {
   clearTempUploads,
@@ -33,6 +34,7 @@ type UploadSession = {
 };
 
 type StartServerOptions = {
+  maxParallelUploads: number;
   port: number;
   onActivity?: (activity: UploadActivity) => void;
   onLibraryChanged?: () => Promise<void> | void;
@@ -189,6 +191,8 @@ class LocalUploadServer {
 
   private server: ConfigServerLike | null = null;
 
+  private maxParallelUploads = DEFAULT_MAX_PARALLEL_UPLOADS;
+
   private uploads = new Map<string, UploadSession>();
 
   isRunning(): boolean {
@@ -199,7 +203,13 @@ class LocalUploadServer {
     return this.port;
   }
 
-  async start({ port, onActivity, onLibraryChanged }: StartServerOptions): Promise<void> {
+  setMaxParallelUploads(maxParallelUploads: number): void {
+    this.maxParallelUploads = clampMaxParallelUploads(maxParallelUploads);
+  }
+
+  async start({ port, onActivity, onLibraryChanged, maxParallelUploads }: StartServerOptions): Promise<void> {
+    this.maxParallelUploads = clampMaxParallelUploads(maxParallelUploads);
+
     if (this.server && this.port === port) {
       this.onActivity = onActivity;
       this.onLibraryChanged = onLibraryChanged;
@@ -307,6 +317,7 @@ class LocalUploadServer {
         return htmlResponse(
           buildUploadPage({
             chunkSize: CHUNK_SIZE,
+            maxParallelUploads: this.maxParallelUploads,
           }),
         );
       }

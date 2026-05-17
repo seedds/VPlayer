@@ -1,8 +1,11 @@
 type UploadPageOptions = {
   chunkSize: number;
+  maxParallelUploads: number;
 };
 
-export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
+export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOptions): string {
+  const safeMaxParallelUploads = Number.isFinite(maxParallelUploads) ? Math.min(5, Math.max(1, Math.round(maxParallelUploads))) : 1;
+
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -556,7 +559,7 @@ export function buildUploadPage({ chunkSize }: UploadPageOptions): string {
       const refreshButton = document.getElementById('refresh-button');
       const newFolderButton = document.getElementById('new-folder-button');
       const defaultChunkSize = ${chunkSize};
-      const MAX_PARALLEL_UPLOADS = 3;
+      const MAX_PARALLEL_UPLOADS = ${safeMaxParallelUploads};
       let currentPath = '';
       let currentLibraryItems = [];
       let selectedLibraryPaths = new Set();
