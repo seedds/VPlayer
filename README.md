@@ -45,10 +45,12 @@ eas build -p android --profile preview
 
 Local and GitHub release builds use the same metadata source:
 
-- `versionName` comes from `app.json`
+- `versionName` defaults to the next patch release for the `major.minor` line in `app.json`
 - `versionCode` defaults to `1000000 + git rev-list --count HEAD`
 
-That keeps the package version in sync for the same commit across local builds and the GitHub release workflow.
+That keeps local builds and the GitHub release workflow in sync for the same commit.
+
+If `app.json` has `1.0.2` and the latest release tag is `v1.0.2-build.1000101`, the next computed release version will be `1.0.3`.
 
 Build a local release APK from the Android project:
 
@@ -59,7 +61,7 @@ cd android
 
 Output file:
 
-- `android/app/build/outputs/apk/release/vplayer-<versionName>-<versionCode>.apk`
+- `android/app/build/outputs/apk/release/vplayer-<versionName>.apk`
 
 Build an ARM64-only APK:
 

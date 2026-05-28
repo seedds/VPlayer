@@ -9,6 +9,8 @@ const appConfigPath = path.join(projectRoot, 'app.json');
 const outputFormatArg = process.argv.find((arg) => arg.startsWith('--format='));
 const outputFormat = outputFormatArg ? outputFormatArg.slice('--format='.length) : 'json';
 const versionCodeBase = 1000000;
+const semverPattern = /^(\d+)\.(\d+)\.(\d+)$/;
+const releaseTagPattern = /^v(\d+)\.(\d+)\.(\d+)(?:-build\.\d+)?$/;
 
 function readAppVersion() {
   const appConfig = JSON.parse(fs.readFileSync(appConfigPath, 'utf8'));
@@ -18,6 +20,66 @@ function readAppVersion() {
   }
 
   return String(appConfig.expo.version);
+}
+
+function parseSemver(version, label) {
+  const match = semverPattern.exec(String(version).trim());
+
+  if (!match) {
+    throw new Error(`Expected ${label} to be x.y.z, got: ${version}`);
+  }
+
+  return {
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10),
+    patch: Number.parseInt(match[3], 10),
+  };
+}
+
+function formatSemver(version) {
+  return `${version.major}.${version.minor}.${version.patch}`;
+}
+
+function readGitTags() {
+  const output = execFileSync('git', ['tag', '--list'], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+
+  return output ? output.split('\n') : [];
+}
+
+function readVersionName() {
+  if (process.env.VPLAYER_VERSION_NAME) {
+    return process.env.VPLAYER_VERSION_NAME;
+  }
+
+  const baseVersion = parseSemver(readAppVersion(), 'expo.version in app.json');
+  const highestPatch = readGitTags().reduce((maxPatch, tag) => {
+    const match = releaseTagPattern.exec(tag);
+
+    if (!match) {
+      return maxPatch;
+    }
+
+    const tagVersion = {
+      major: Number.parseInt(match[1], 10),
+      minor: Number.parseInt(match[2], 10),
+      patch: Number.parseInt(match[3], 10),
+    };
+
+    if (tagVersion.major !== baseVersion.major || tagVersion.minor !== baseVersion.minor) {
+      return maxPatch;
+    }
+
+    return Math.max(maxPatch, tagVersion.patch);
+  }, baseVersion.patch - 1);
+
+  return formatSemver({
+    ...baseVersion,
+    patch: highestPatch + 1,
+  });
 }
 
 function readGitCommitCount() {
@@ -44,11 +106,11 @@ function sanitizeVersionName(versionName) {
 }
 
 function createMetadata() {
-  const versionName = process.env.VPLAYER_VERSION_NAME || readAppVersion();
+  const versionName = readVersionName();
   const versionCode = readVersionCode();
 
   return {
-    apk_name: `vplayer-${sanitizeVersionName(versionName)}-${versionCode}.apk`,
+    apk_name: `vplayer-${sanitizeVersionName(versionName)}.apk`,
     app_version: versionName,
     build_number: String(versionCode),
     release_tag: `v${versionName}-build.${versionCode}`,

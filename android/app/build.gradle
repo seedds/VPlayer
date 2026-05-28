@@ -171,7 +171,7 @@ android {
 androidComponents {
     onVariants(selector().withBuildType("release")) { variant ->
         variant.outputs.each { output ->
-            output.outputFileName.set("vplayer-${apkVersionName}-${parsedVersionCode}.apk")
+            output.outputFileName.set("vplayer-${apkVersionName}.apk")
         }
     }
 }

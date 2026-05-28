@@ -131,4 +131,4 @@ jobs:
           files: android/app/build/outputs/apk/release/${{ steps.release_meta.outputs.apk_name }}
           make_latest: true
           overwrite_files: true
-          name: VPlayer ${{ steps.release_meta.outputs.app_version }} (${{ steps.release_meta.outputs.build_number }})
+          name: VPlayer ${{ steps.release_meta.outputs.app_version }}
