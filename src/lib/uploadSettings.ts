@@ -2,7 +2,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 export const MIN_MAX_PARALLEL_UPLOADS = 1;
 export const MAX_MAX_PARALLEL_UPLOADS = 5;
-export const DEFAULT_MAX_PARALLEL_UPLOADS = 1;
+export const DEFAULT_MAX_PARALLEL_UPLOADS = 3;
 
 export type UploadSettings = {
   maxParallelUploads: number;

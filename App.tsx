@@ -84,17 +84,6 @@ const INITIAL_ACTIVITY: UploadActivity = {
   updatedAt: Date.now(),
 };
 
-const SETTINGS_COLORS = {
-  accent: '#007aff',
-  background: '#f2f2f7',
-  card: '#ffffff',
-  chevron: '#c7c7cc',
-  footer: '#6d6d72',
-  separator: '#c6c6c8',
-  title: '#000000',
-  value: '#8e8e93',
-} as const;
-
 function createUploadActivity(status: UploadActivity['status'], message: string): UploadActivity {
   return {
     status,
@@ -995,13 +984,6 @@ export default function App() {
                   </MainTab.Screen>
                   <MainTab.Screen
                     name="Settings"
-                    options={{
-                      headerShown: true,
-                      title: 'Settings',
-                      headerShadowVisible: false,
-                      headerStyle: styles.settingsNavigationHeader,
-                      headerTitleStyle: styles.settingsNavigationTitle,
-                    }}
                     listeners={{
                       focus: () => {
                         handleCancelSelection();
@@ -1009,9 +991,9 @@ export default function App() {
                     }}
                   >
                     {() => (
-                      <SafeAreaView style={styles.settingsSafeArea} edges={['left', 'right']}>
-                        <View style={styles.settingsScreen}>
-                          <View style={styles.settingsContentArea}>
+                      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+                        <View style={styles.screen}>
+                          <View style={styles.contentArea}>
                             {loading ? (
                               <View style={styles.loadingCard}>
                                 <ActivityIndicator size="large" color="#1f6f68" />
@@ -1038,15 +1020,12 @@ export default function App() {
                 title: 'Concurrent Uploads',
                 headerBackTitle: 'Settings',
                 headerShadowVisible: false,
-                headerTintColor: SETTINGS_COLORS.accent,
-                headerStyle: styles.settingsNavigationHeader,
-                headerTitleStyle: styles.settingsNavigationTitle,
               }}
             >
               {({ navigation }) => (
-                <SafeAreaView style={styles.settingsSafeArea} edges={['left', 'right']}>
-                  <View style={styles.settingsScreen}>
-                    <View style={styles.settingsContentArea}>
+                <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
+                  <View style={styles.screen}>
+                    <View style={styles.contentArea}>
                       <UploadConcurrencySettingsView
                         maxParallelUploads={maxParallelUploads}
                         onSelectMaxParallelUploads={async (value) => {
@@ -1392,20 +1371,24 @@ type SettingsViewProps = {
 
 function SettingsView({ maxParallelUploads, onOpenUploadConcurrencySettings }: SettingsViewProps) {
   return (
-    <ScrollView contentContainerStyle={styles.settingsContent} showsVerticalScrollIndicator={false}>
-      <View style={styles.settingsSection}>
-        <Text style={styles.settingsSectionLabel}>Upload</Text>
-        <View style={styles.settingsGroup}>
-          <Pressable onPress={onOpenUploadConcurrencySettings} style={({ pressed }) => [styles.settingsRow, pressed && styles.settingsRowPressed]}>
-            <Text style={styles.settingsRowTitle}>Concurrent uploads</Text>
-            <View style={styles.settingsRowAccessory}>
-              <Text style={styles.settingsRowValue}>{maxParallelUploads}</Text>
-              <Text style={styles.settingsRowChevron}>{'\u203A'}</Text>
+    <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
+      <Panel title="Upload settings" subtitle="Control how many files the browser uploader sends at once.">
+        <View style={styles.settingSection}>
+          <Text style={styles.settingTitle}>Concurrent uploads</Text>
+          <Text style={styles.supportText}>Choose how many files the browser uploader can send in parallel.</Text>
+          <Pressable
+            onPress={onOpenUploadConcurrencySettings}
+            style={({ pressed }) => [styles.settingNavigationRow, pressed && styles.settingNavigationRowPressed]}
+          >
+            <Text style={styles.settingNavigationLabel}>Select upload count</Text>
+            <View style={styles.settingNavigationAccessory}>
+              <Text style={styles.settingNavigationValue}>{maxParallelUploads}</Text>
+              <Text style={styles.settingNavigationChevron}>{'\u203A'}</Text>
             </View>
           </Pressable>
+          <Text style={styles.supportText}>Refresh the browser upload page to apply changes.</Text>
         </View>
-        <Text style={styles.settingsFooter}>Choose how many files the browser uploader can send in parallel.</Text>
-      </View>
+      </Panel>
     </ScrollView>
   );
 }
@@ -1417,30 +1400,31 @@ type UploadConcurrencySettingsViewProps = {
 
 function UploadConcurrencySettingsView({ maxParallelUploads, onSelectMaxParallelUploads }: UploadConcurrencySettingsViewProps) {
   return (
-    <ScrollView contentContainerStyle={styles.settingsContent} showsVerticalScrollIndicator={false}>
-      <View style={styles.settingsSection}>
-        <View style={styles.settingsGroup}>
-          {UPLOAD_CONCURRENCY_OPTIONS.map((value, index) => {
-            const selected = value === maxParallelUploads;
+    <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
+      <Panel title="Concurrent uploads" subtitle="Choose how many files the browser uploader can send in parallel.">
+        <View style={styles.settingSection}>
+          <View style={styles.settingOptionGrid}>
+            {UPLOAD_CONCURRENCY_OPTIONS.map((value) => {
+              const selected = value === maxParallelUploads;
 
-            return (
-              <Pressable
-                key={value}
-                onPress={() => onSelectMaxParallelUploads(value)}
-                style={({ pressed }) => [
-                  styles.settingsRow,
-                  index > 0 && styles.settingsRowWithSeparator,
-                  pressed && styles.settingsRowPressed,
-                ]}
-              >
-                <Text style={styles.settingsRowTitle}>{value} upload{value === 1 ? '' : 's'}</Text>
-                <Text style={[styles.settingsCheckmark, !selected && styles.settingsCheckmarkHidden]}>{'\u2713'}</Text>
-              </Pressable>
-            );
-          })}
+              return (
+                <Pressable
+                  key={value}
+                  onPress={() => onSelectMaxParallelUploads(value)}
+                  style={({ pressed }) => [
+                    styles.settingOptionButton,
+                    selected && styles.settingOptionButtonSelected,
+                    pressed && styles.settingOptionButtonPressed,
+                  ]}
+                >
+                  <Text style={[styles.settingOptionText, selected && styles.settingOptionTextSelected]}>{value}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={styles.supportText}>Refresh the browser upload page to apply changes.</Text>
         </View>
-        <Text style={styles.settingsFooter}>Refresh the browser upload page to apply changes.</Text>
-      </View>
+      </Panel>
     </ScrollView>
   );
 }
@@ -1493,10 +1477,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#efe7db',
   },
-  settingsSafeArea: {
-    flex: 1,
-    backgroundColor: SETTINGS_COLORS.background,
-  },
   tabScene: {
     backgroundColor: '#efe7db',
   },
@@ -1512,17 +1492,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#efe7db',
   },
-  settingsScreen: {
-    flex: 1,
-    backgroundColor: SETTINGS_COLORS.background,
-  },
   contentArea: {
     flex: 1,
     paddingHorizontal: 16,
     paddingTop: 12,
-  },
-  settingsContentArea: {
-    flex: 1,
   },
   libraryContentArea: {
     flex: 1,
@@ -1684,81 +1657,77 @@ const styles = StyleSheet.create({
     marginTop: 16,
     gap: 14,
   },
-  settingsNavigationHeader: {
-    backgroundColor: SETTINGS_COLORS.background,
+  settingSection: {
+    gap: 14,
   },
-  settingsNavigationTitle: {
-    color: SETTINGS_COLORS.title,
-    fontSize: 17,
-    fontWeight: '600',
+  settingTitle: {
+    color: '#1d1917',
+    fontSize: 16,
+    fontWeight: '700',
   },
-  settingsContent: {
-    paddingTop: 28,
-    paddingBottom: 24,
-  },
-  settingsSection: {
-    gap: 8,
-  },
-  settingsSectionLabel: {
-    color: SETTINGS_COLORS.footer,
-    fontSize: 13,
-    lineHeight: 18,
-    paddingHorizontal: 20,
-    textTransform: 'uppercase',
-  },
-  settingsGroup: {
-    backgroundColor: SETTINGS_COLORS.card,
-    marginHorizontal: 16,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  settingsRow: {
+  settingNavigationRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: SETTINGS_COLORS.card,
-    minHeight: 44,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#ead8c4',
+    backgroundColor: '#fffdf9',
     paddingHorizontal: 16,
-    paddingVertical: 11,
+    paddingVertical: 14,
   },
-  settingsRowWithSeparator: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: SETTINGS_COLORS.separator,
+  settingNavigationRowPressed: {
+    opacity: 0.8,
   },
-  settingsRowPressed: {
-    backgroundColor: '#f7f7f7',
-  },
-  settingsRowAccessory: {
+  settingNavigationAccessory: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  settingsRowTitle: {
-    color: SETTINGS_COLORS.title,
-    fontSize: 17,
+  settingNavigationLabel: {
+    color: '#4f463f',
+    fontSize: 16,
+    fontWeight: '700',
   },
-  settingsRowValue: {
-    color: SETTINGS_COLORS.value,
-    fontSize: 17,
+  settingNavigationValue: {
+    color: '#1f6f68',
+    fontSize: 16,
+    fontWeight: '700',
   },
-  settingsRowChevron: {
-    color: SETTINGS_COLORS.chevron,
+  settingNavigationChevron: {
+    color: '#8f857b',
     fontSize: 20,
     lineHeight: 20,
   },
-  settingsCheckmark: {
-    color: SETTINGS_COLORS.accent,
-    fontSize: 18,
+  settingOptionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  settingOptionButton: {
+    minWidth: 56,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#dfcfbd',
+    backgroundColor: '#fffdf9',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  settingOptionButtonSelected: {
+    borderColor: '#1f6f68',
+    backgroundColor: '#dceeea',
+  },
+  settingOptionButtonPressed: {
+    opacity: 0.8,
+  },
+  settingOptionText: {
+    color: '#4f463f',
+    fontSize: 16,
     fontWeight: '700',
   },
-  settingsCheckmarkHidden: {
-    opacity: 0,
-  },
-  settingsFooter: {
-    color: SETTINGS_COLORS.footer,
-    fontSize: 13,
-    lineHeight: 18,
-    paddingHorizontal: 20,
+  settingOptionTextSelected: {
+    color: '#1f6f68',
   },
   serverStatusLabel: {
     color: '#1d1917',
