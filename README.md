@@ -9,6 +9,7 @@ VPlayer is an Android-first app that does two things:
 
 - Local HTTP upload server running on the phone.
 - Browser-based uploads from another device on the same Wi-Fi network.
+- Unicode file and folder names, including Chinese characters, are preserved during uploads and library management.
 - Local video playback on the device.
 - Automatic landscape playback for videos.
 - Portrait library screens on phones, with landscape playback only while a video is open.

@@ -39,7 +39,7 @@ export function isAllowedSubtitleFileName(fileName: string): boolean {
 }
 
 export function sanitizeFolderName(input: string): string {
-  const cleaned = input.replace(/[^a-zA-Z0-9._ -]/g, '_').replace(/\s+/g, ' ').trim();
+  const cleaned = input.normalize('NFC').replace(/[^\p{L}\p{M}\p{N}._ -]/gu, '_').replace(/\s+/g, ' ').trim();
   const normalized = cleaned.replace(/^\.+$/g, '').replace(/\.+$/g, '').trim();
 
   return normalized || 'folder';
@@ -137,7 +137,7 @@ export function normalizeLibraryDirectoryPath(input?: string | null): string {
 
 export function sanitizeFileName(input: string): string {
   const leafName = input.split(/[\\/]/).pop()?.trim() || 'upload';
-  const cleaned = leafName.replace(/[^a-zA-Z0-9._ -]/g, '_').replace(/\s+/g, ' ');
+  const cleaned = leafName.normalize('NFC').replace(/[^\p{L}\p{M}\p{N}._ -]/gu, '_').replace(/\s+/g, ' ');
   const extension = getFileExtension(cleaned);
   const rawBaseName = extension ? cleaned.slice(0, cleaned.length - extension.length) : cleaned;
   const baseName = rawBaseName.replace(/^\.+$/g, '').replace(/\.+$/g, '').trim() || 'upload';
