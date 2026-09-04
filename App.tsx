@@ -24,7 +24,9 @@ import {
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
+import { FolderPickerModal } from './src/components/FolderPickerModal';
 import { PlayerScreen } from './src/components/PlayerScreen';
+import { PromptModal } from './src/components/PromptModal';
 import { VideoCard } from './src/components/VideoCard';
 import { isAndroidTabletLayout } from './src/lib/device';
 import { formatBytes, formatDate, getUploadProgress, normalizePort } from './src/lib/format';
@@ -34,6 +36,20 @@ import {
   getUploadSettings,
   saveUploadSettings,
 } from './src/lib/uploadSettings';
+import {
+  clampSubtitleFontSize,
+  DEFAULT_SUBTITLE_FONT_SIZE,
+  getSubtitleSettings,
+  saveSubtitleSettings,
+  SUBTITLE_FONT_SIZE_OPTIONS,
+} from './src/lib/subtitleSettings';
+import {
+  clampLongPressSpeedTenths,
+  DEFAULT_LONG_PRESS_SPEED_TENTHS,
+  getPlaybackSettings,
+  LONG_PRESS_SPEED_TENTHS_OPTIONS,
+  savePlaybackSettings,
+} from './src/lib/playbackSettings';
 import {
   clearAllPlaybackProgress,
   clearPlaybackProgressForUris,
@@ -49,12 +65,16 @@ import {
 } from './src/lib/videoThumbnails';
 import type { LibraryItem, UploadActivity, VideoItem } from './src/lib/types';
 import {
+  createLibraryFolder,
   deleteLibraryItem,
   ensureAppDirectories,
+  getFileExtension,
   getLibraryItem,
   getVideoItems,
   listAllVideoItems,
   listLibraryItems,
+  moveLibraryItem,
+  renameLibraryItem,
 } from './src/lib/videoLibrary';
 import { DEFAULT_SERVER_PORT, localUploadServer } from './src/server/localUploadServer';
 
@@ -69,6 +89,8 @@ type RootStackParamList = {
   MainTabs: undefined;
   Player: undefined;
   UploadConcurrencySettings: undefined;
+  SubtitleSizeSettings: undefined;
+  LongPressSpeedSettings: undefined;
 };
 
 type MainTabParamList = {
@@ -96,6 +118,13 @@ function createUploadActivity(status: UploadActivity['status'], message: string)
 const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
 const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
 const UPLOAD_CONCURRENCY_OPTIONS = [1, 2, 3, 4, 5] as const;
+
+// Full name with the base selected (extension preserved but not highlighted),
+// matching the Flutter rename prompt so the part that must be kept is visible.
+function getRenameSelection(name: string): { start: number; end: number } {
+  const extension = getFileExtension(name);
+  return { start: 0, end: Math.max(name.length - extension.length, 0) };
+}
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const MainTab = createBottomTabNavigator<MainTabParamList>();
@@ -143,6 +172,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [portInput, setPortInput] = useState(String(DEFAULT_SERVER_PORT));
   const [maxParallelUploads, setMaxParallelUploads] = useState(DEFAULT_MAX_PARALLEL_UPLOADS);
+  const [subtitleFontSize, setSubtitleFontSize] = useState(DEFAULT_SUBTITLE_FONT_SIZE);
+  const [longPressSpeedTenths, setLongPressSpeedTenths] = useState(DEFAULT_LONG_PRESS_SPEED_TENTHS);
+  // In-app library-management dialogs (Android has no Alert.prompt).
+  const [newFolderVisible, setNewFolderVisible] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<LibraryItem | null>(null);
+  const [moveVisible, setMoveVisible] = useState(false);
   const playbackStateByUriRef = useRef<PlaybackStateMap>({});
   const thumbnailSourceByUriRef = useRef<Record<string, ThumbnailSource | null | undefined>>({});
   const thumbnailJobUrisRef = useRef<Set<string>>(new Set());
@@ -164,6 +199,8 @@ export default function App() {
   }, [selectedVideoUri, videoItems]);
   const selectedVideo = selectedIndex !== null ? videoItems[selectedIndex] ?? null : null;
   const selectedCount = selectedVideoUris.size;
+  const selectedItems = useMemo(() => videos.filter((video) => selectedVideoUris.has(video.uri)), [selectedVideoUris, videos]);
+  const allSelected = videos.length > 0 && selectedCount === videos.length;
   const shouldKeepAwakeForUpload = activity.activeUploads.length > 0;
 
   useEffect(() => {
@@ -534,8 +571,12 @@ export default function App() {
         maxParallelUploadsRef.current = settings.maxParallelUploads;
         localUploadServer.setMaxParallelUploads(settings.maxParallelUploads);
 
+        const [subtitleSettings, playbackSettings] = await Promise.all([getSubtitleSettings(), getPlaybackSettings()]);
+
         if (isMounted) {
           setMaxParallelUploads(settings.maxParallelUploads);
+          setSubtitleFontSize(subtitleSettings.subtitleFontSize);
+          setLongPressSpeedTenths(playbackSettings.longPressSpeedTenths);
         }
 
         await ensureAppDirectories();
@@ -725,6 +766,165 @@ export default function App() {
     );
   }, [getCleanupVideos, handleCancelSelection, refreshLibrary, selectedVideoUris, videos]);
 
+  // Rename/move change a video's URI, and playback progress + thumbnails are
+  // keyed by URI, so the old artifacts have to be cleared. Collected before the
+  // mutation while the old URIs still resolve.
+  const forgetPlaybackArtifacts = useCallback(async (cleanupVideos: VideoItem[]) => {
+    if (cleanupVideos.length === 0) {
+      return;
+    }
+
+    await clearPlaybackProgressForUris(cleanupVideos.map((video) => video.uri));
+    await Promise.all(cleanupVideos.map((video) => deleteThumbnailForVideo(video).catch(() => undefined)));
+    setThumbnailSourceByUri((current) => {
+      const next = { ...current };
+
+      for (const video of cleanupVideos) {
+        delete next[video.uri];
+      }
+
+      return next;
+    });
+  }, []);
+
+  const handleCreateFolder = useCallback(
+    (name: string) => {
+      setNewFolderVisible(false);
+
+      void (async () => {
+        try {
+          await createLibraryFolder(currentFolderPathRef.current, name);
+          await refreshLibrary();
+        } catch (error) {
+          Alert.alert('New folder failed', error instanceof Error ? error.message : 'Could not create the folder.');
+        }
+      })();
+    },
+    [refreshLibrary],
+  );
+
+  const handleRenameItem = useCallback(
+    (name: string) => {
+      const target = renameTarget;
+      setRenameTarget(null);
+
+      if (!target) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          const entryType = target.kind === 'folder' ? 'folder' : 'file';
+          const cleanupVideos = Array.from(
+            new Map((await getCleanupVideos(target)).map((item) => [item.uri, item])).values(),
+          );
+
+          const renamed = await renameLibraryItem(target.relativePath, entryType, name);
+
+          if (renamed.uri !== target.uri) {
+            await forgetPlaybackArtifacts(cleanupVideos);
+          }
+
+          await refreshLibrary();
+        } catch (error) {
+          Alert.alert('Rename failed', error instanceof Error ? error.message : 'Could not rename the item.');
+        }
+      })();
+    },
+    [forgetPlaybackArtifacts, getCleanupVideos, refreshLibrary, renameTarget],
+  );
+
+  const handleMoveSelected = useCallback(
+    (destinationPath: string | null) => {
+      setMoveVisible(false);
+      const targets = selectedItems;
+
+      if (targets.length === 0) {
+        return;
+      }
+
+      void (async () => {
+        const failures: string[] = [];
+
+        // Diverges from the server's move (which stops on first failure): move
+        // what we can and report the rest, so one collision doesn't abandon a batch.
+        for (const target of targets) {
+          try {
+            const entryType = target.kind === 'folder' ? 'folder' : 'file';
+            const cleanupVideos = Array.from(
+              new Map((await getCleanupVideos(target)).map((item) => [item.uri, item])).values(),
+            );
+
+            const moved = await moveLibraryItem(target.relativePath, entryType, destinationPath);
+
+            if (moved.uri !== target.uri) {
+              await forgetPlaybackArtifacts(cleanupVideos);
+            }
+          } catch (error) {
+            failures.push(`${target.name}: ${error instanceof Error ? error.message : 'move failed'}`);
+          }
+        }
+
+        handleCancelSelection();
+        await refreshLibrary();
+
+        if (failures.length > 0) {
+          Alert.alert('Some items could not be moved', failures.join('\n'));
+        }
+      })();
+    },
+    [forgetPlaybackArtifacts, getCleanupVideos, handleCancelSelection, refreshLibrary, selectedItems],
+  );
+
+  const handleToggleSelectAll = useCallback(() => {
+    if (allSelected) {
+      handleCancelSelection();
+      return;
+    }
+
+    setSelectedVideoUris(new Set(videos.map((video) => video.uri)));
+  }, [allSelected, handleCancelSelection, videos]);
+
+  const handleSelectSubtitleFontSize = useCallback(
+    async (value: number) => {
+      const nextValue = clampSubtitleFontSize(value);
+
+      if (nextValue === subtitleFontSize) {
+        return true;
+      }
+
+      try {
+        await saveSubtitleSettings({ subtitleFontSize: nextValue });
+        setSubtitleFontSize(nextValue);
+        return true;
+      } catch (error) {
+        Alert.alert('Save failed', error instanceof Error ? error.message : 'Could not save subtitle settings.');
+        return false;
+      }
+    },
+    [subtitleFontSize],
+  );
+
+  const handleSelectLongPressSpeed = useCallback(
+    async (value: number) => {
+      const nextValue = clampLongPressSpeedTenths(value);
+
+      if (nextValue === longPressSpeedTenths) {
+        return true;
+      }
+
+      try {
+        await savePlaybackSettings({ longPressSpeedTenths: nextValue });
+        setLongPressSpeedTenths(nextValue);
+        return true;
+      } catch (error) {
+        Alert.alert('Save failed', error instanceof Error ? error.message : 'Could not save playback settings.');
+        return false;
+      }
+    },
+    [longPressSpeedTenths],
+  );
+
   const handleSelectMaxParallelUploads = useCallback(
     async (value: number) => {
       const nextValue = clampMaxParallelUploads(value);
@@ -881,7 +1081,12 @@ export default function App() {
                               </View>
                             ) : (
                               <LibraryView
+                                allSelected={allSelected}
                                 currentFolderPath={currentFolderPath}
+                                onNewFolder={() => setNewFolderVisible(true)}
+                                onRenameVideo={(video) => setRenameTarget(video)}
+                                onMoveSelected={() => setMoveVisible(true)}
+                                onToggleSelectAll={handleToggleSelectAll}
                                 onClearPlayback={() => {
                                   Alert.alert('Clear playback history?', 'This resets all saved playback positions and marks every video as new.', [
                                     {
@@ -1001,8 +1206,12 @@ export default function App() {
                               </View>
                             ) : (
                               <SettingsView
+                                longPressSpeedTenths={longPressSpeedTenths}
                                 maxParallelUploads={maxParallelUploads}
+                                onOpenLongPressSpeedSettings={() => navigationRef.navigate('LongPressSpeedSettings')}
+                                onOpenSubtitleSizeSettings={() => navigationRef.navigate('SubtitleSizeSettings')}
                                 onOpenUploadConcurrencySettings={handleOpenUploadConcurrencySettings}
+                                subtitleFontSize={subtitleFontSize}
                               />
                             )}
                           </View>
@@ -1042,6 +1251,69 @@ export default function App() {
               )}
             </RootStack.Screen>
             <RootStack.Screen
+              name="SubtitleSizeSettings"
+              options={{
+                headerShown: true,
+                title: 'Subtitle Size',
+                headerBackTitle: 'Settings',
+                headerShadowVisible: false,
+              }}
+            >
+              {({ navigation }) => (
+                <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
+                  <View style={styles.screen}>
+                    <View style={styles.contentArea}>
+                      <OptionPickerView
+                        options={SUBTITLE_FONT_SIZE_OPTIONS}
+                        selectedValue={subtitleFontSize}
+                        subtitle="Choose how large subtitles appear during playback."
+                        title="Subtitle size"
+                        onSelect={async (value) => {
+                          const didSave = await handleSelectSubtitleFontSize(value);
+
+                          if (didSave) {
+                            navigation.goBack();
+                          }
+                        }}
+                      />
+                    </View>
+                  </View>
+                </SafeAreaView>
+              )}
+            </RootStack.Screen>
+            <RootStack.Screen
+              name="LongPressSpeedSettings"
+              options={{
+                headerShown: true,
+                title: 'Hold-to-Speed-Up',
+                headerBackTitle: 'Settings',
+                headerShadowVisible: false,
+              }}
+            >
+              {({ navigation }) => (
+                <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
+                  <View style={styles.screen}>
+                    <View style={styles.contentArea}>
+                      <OptionPickerView
+                        formatLabel={(value) => `${(value / 10).toFixed(1)}\u00d7`}
+                        options={LONG_PRESS_SPEED_TENTHS_OPTIONS}
+                        selectedValue={longPressSpeedTenths}
+                        subtitle="Press and hold the video to temporarily play at this speed."
+                        title="Hold-to-speed-up rate"
+                        onSelect={async (value) => {
+                          const didSave = await handleSelectLongPressSpeed(value);
+
+                          if (didSave) {
+                            navigation.goBack();
+                          }
+                        }}
+                      />
+                    </View>
+                  </View>
+                </SafeAreaView>
+              )}
+            </RootStack.Screen>
+            <RootStack.Screen
               name="Player"
               listeners={{
                 beforeRemove: () => {
@@ -1057,6 +1329,8 @@ export default function App() {
                     exitOrientationLock={
                       isAndroidTablet ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP
                     }
+                    longPressSpeedTenths={longPressSpeedTenths}
+                    subtitleFontSize={subtitleFontSize}
                     videos={videoItems}
                     onClose={() => {
                       navigation.goBack();
@@ -1068,6 +1342,29 @@ export default function App() {
             </RootStack.Screen>
           </RootStack.Navigator>
         </NavigationContainer>
+        <PromptModal
+          confirmLabel="Create"
+          onCancel={() => setNewFolderVisible(false)}
+          onSubmit={handleCreateFolder}
+          placeholder="Folder name"
+          title="New folder"
+          visible={newFolderVisible}
+        />
+        <PromptModal
+          confirmLabel="Rename"
+          initialValue={renameTarget?.name ?? ''}
+          onCancel={() => setRenameTarget(null)}
+          onSubmit={handleRenameItem}
+          selection={renameTarget ? getRenameSelection(renameTarget.name) : undefined}
+          title="Rename"
+          visible={renameTarget !== null}
+        />
+        <FolderPickerModal
+          movingItems={selectedItems}
+          onCancel={() => setMoveVisible(false)}
+          onPick={handleMoveSelected}
+          visible={moveVisible}
+        />
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );
@@ -1080,13 +1377,18 @@ function UploadWakeLock() {
 }
 
 type LibraryViewProps = {
+  allSelected: boolean;
   currentFolderPath: string | null;
   onCancelSelection: () => void;
   onClearPlayback: () => void;
   onClearSelectedPlayback: () => void;
   onDeleteSelected: () => void;
+  onMoveSelected: () => void;
   onNavigateUp: () => void;
+  onNewFolder: () => void;
   onOpenFolder: (path: string) => void;
+  onRenameVideo: (video: LibraryItem) => void;
+  onToggleSelectAll: () => void;
   playbackStateByUri: PlaybackStateMap;
   selectedCount: number;
   selectedVideoUris: Set<string>;
@@ -1100,13 +1402,18 @@ type LibraryViewProps = {
 };
 
 function LibraryView({
+  allSelected,
   currentFolderPath,
   onCancelSelection,
   onClearPlayback,
   onClearSelectedPlayback,
   onDeleteSelected,
+  onMoveSelected,
   onNavigateUp,
+  onNewFolder,
   onOpenFolder,
+  onRenameVideo,
+  onToggleSelectAll,
   playbackStateByUri,
   selectedCount,
   selectedVideoUris,
@@ -1164,6 +1471,7 @@ function LibraryView({
           onLongPressVideo(video);
         }}
         onDelete={() => onDeleteVideo(video)}
+        onRename={() => onRenameVideo(video)}
         onPlay={() => {
           if (selectionMode) {
             onToggleVideoSelection(video);
@@ -1191,6 +1499,7 @@ function LibraryView({
       onLongPressVideo,
       onOpenFolder,
       onPlayVideo,
+      onRenameVideo,
       onToggleVideoSelection,
       playbackStateByUri,
       selectedVideoUris,
@@ -1216,6 +1525,12 @@ function LibraryView({
             <Pressable onPress={onCancelSelection} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonSecondary, pressed && styles.selectionButtonPressed]}>
               <Text style={styles.selectionButtonSecondaryText}>Cancel</Text>
             </Pressable>
+            <Pressable onPress={onToggleSelectAll} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonSecondary, pressed && styles.selectionButtonPressed]}>
+              <Text style={styles.selectionButtonSecondaryText}>{allSelected ? 'Deselect All' : 'Select All'}</Text>
+            </Pressable>
+            <Pressable onPress={onMoveSelected} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonSecondary, pressed && styles.selectionButtonPressed]}>
+              <Text style={styles.selectionButtonSecondaryText}>Move</Text>
+            </Pressable>
             <Pressable onPress={onClearSelectedPlayback} style={({ pressed }) => [styles.selectionButton, styles.selectionButtonSecondary, pressed && styles.selectionButtonPressed]}>
               <Text style={styles.selectionButtonSecondaryText}>Clear History</Text>
             </Pressable>
@@ -1225,6 +1540,9 @@ function LibraryView({
           </View>
         ) : (
           <View style={styles.libraryToolbarActions}>
+            <Pressable onPress={onNewFolder} style={({ pressed }) => [styles.clearPlaybackButton, pressed && styles.clearPlaybackButtonPressed]}>
+              <Text style={styles.clearPlaybackButtonText}>New Folder</Text>
+            </Pressable>
             <Pressable onPress={onClearPlayback} style={({ pressed }) => [styles.clearPlaybackButton, pressed && styles.clearPlaybackButtonPressed]}>
               <Text style={styles.clearPlaybackButtonText}>Clear All History</Text>
             </Pressable>
@@ -1365,11 +1683,22 @@ function UploadView({
 }
 
 type SettingsViewProps = {
+  longPressSpeedTenths: number;
   maxParallelUploads: number;
+  onOpenLongPressSpeedSettings: () => void;
+  onOpenSubtitleSizeSettings: () => void;
   onOpenUploadConcurrencySettings: () => void;
+  subtitleFontSize: number;
 };
 
-function SettingsView({ maxParallelUploads, onOpenUploadConcurrencySettings }: SettingsViewProps) {
+function SettingsView({
+  longPressSpeedTenths,
+  maxParallelUploads,
+  onOpenLongPressSpeedSettings,
+  onOpenSubtitleSizeSettings,
+  onOpenUploadConcurrencySettings,
+  subtitleFontSize,
+}: SettingsViewProps) {
   return (
     <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
       <Panel title="Upload settings" subtitle="Control how many files the browser uploader sends at once.">
@@ -1387,6 +1716,38 @@ function SettingsView({ maxParallelUploads, onOpenUploadConcurrencySettings }: S
             </View>
           </Pressable>
           <Text style={styles.supportText}>Refresh the browser upload page to apply changes.</Text>
+        </View>
+      </Panel>
+
+      <Panel title="Player settings" subtitle="Tune subtitles and the hold-to-speed-up gesture.">
+        <View style={styles.settingSection}>
+          <Text style={styles.settingTitle}>Subtitle size</Text>
+          <Text style={styles.supportText}>Choose how large subtitles appear during playback.</Text>
+          <Pressable
+            onPress={onOpenSubtitleSizeSettings}
+            style={({ pressed }) => [styles.settingNavigationRow, pressed && styles.settingNavigationRowPressed]}
+          >
+            <Text style={styles.settingNavigationLabel}>Select subtitle size</Text>
+            <View style={styles.settingNavigationAccessory}>
+              <Text style={styles.settingNavigationValue}>{subtitleFontSize}</Text>
+              <Text style={styles.settingNavigationChevron}>{'\u203A'}</Text>
+            </View>
+          </Pressable>
+        </View>
+
+        <View style={styles.settingSection}>
+          <Text style={styles.settingTitle}>Hold-to-speed-up rate</Text>
+          <Text style={styles.supportText}>Press and hold the video to temporarily play at this speed.</Text>
+          <Pressable
+            onPress={onOpenLongPressSpeedSettings}
+            style={({ pressed }) => [styles.settingNavigationRow, pressed && styles.settingNavigationRowPressed]}
+          >
+            <Text style={styles.settingNavigationLabel}>Select speed</Text>
+            <View style={styles.settingNavigationAccessory}>
+              <Text style={styles.settingNavigationValue}>{(longPressSpeedTenths / 10).toFixed(1)}{'\u00d7'}</Text>
+              <Text style={styles.settingNavigationChevron}>{'\u203A'}</Text>
+            </View>
+          </Pressable>
         </View>
       </Panel>
     </ScrollView>
@@ -1423,6 +1784,47 @@ function UploadConcurrencySettingsView({ maxParallelUploads, onSelectMaxParallel
             })}
           </View>
           <Text style={styles.supportText}>Refresh the browser upload page to apply changes.</Text>
+        </View>
+      </Panel>
+    </ScrollView>
+  );
+}
+
+type OptionPickerViewProps = {
+  formatLabel?: (value: number) => string;
+  options: readonly number[];
+  selectedValue: number;
+  subtitle: string;
+  title: string;
+  onSelect: (value: number) => Promise<void> | void;
+};
+
+function OptionPickerView({ formatLabel, options, selectedValue, subtitle, title, onSelect }: OptionPickerViewProps) {
+  return (
+    <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
+      <Panel title={title} subtitle={subtitle}>
+        <View style={styles.settingSection}>
+          <View style={styles.settingOptionGrid}>
+            {options.map((value) => {
+              const selected = value === selectedValue;
+
+              return (
+                <Pressable
+                  key={value}
+                  onPress={() => onSelect(value)}
+                  style={({ pressed }) => [
+                    styles.settingOptionButton,
+                    selected && styles.settingOptionButtonSelected,
+                    pressed && styles.settingOptionButtonPressed,
+                  ]}
+                >
+                  <Text style={[styles.settingOptionText, selected && styles.settingOptionTextSelected]}>
+                    {formatLabel ? formatLabel(value) : value}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
       </Panel>
     </ScrollView>

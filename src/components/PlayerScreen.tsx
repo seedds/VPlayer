@@ -17,8 +17,10 @@ import type { VideoItem } from '../lib/types';
 type PlayerScreenProps = {
   currentIndex: number;
   exitOrientationLock: ScreenOrientation.OrientationLock;
+  longPressSpeedTenths: number;
   onClose: () => void;
   onSelectIndex: (index: number) => void;
+  subtitleFontSize: number;
   videos: VideoItem[];
 };
 
@@ -41,6 +43,11 @@ const RESUME_NEAR_END_THRESHOLD_SECONDS = 10;
 const PLAYBACK_RATE_STEP = 0.1;
 const MIN_PLAYBACK_RATE = 0.5;
 const MAX_PLAYBACK_RATE = 2;
+// A hold longer than the double-tap window engages the speed boost, so a hold can
+// never swallow a double tap.
+const LONG_PRESS_BOOST_DELAY_MS = 500;
+const SUBTITLE_BASE_FONT_SIZE = 36;
+const SUBTITLE_BASE_LINE_HEIGHT = 44;
 
 function formatClockTime(value: Date): string {
   return `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
@@ -75,7 +82,15 @@ function getResumePosition(savedPosition: number, duration: number): number {
   return Math.max(duration - RESUME_NEAR_END_THRESHOLD_SECONDS, 0);
 }
 
-export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSelectIndex, videos }: PlayerScreenProps) {
+export function PlayerScreen({
+  currentIndex,
+  exitOrientationLock,
+  longPressSpeedTenths,
+  onClose,
+  onSelectIndex,
+  subtitleFontSize,
+  videos,
+}: PlayerScreenProps) {
   const insets = useSafeAreaInsets();
   const video = videos[currentIndex];
   const hasNextVideo = currentIndex < videos.length - 1;
@@ -91,6 +106,17 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
   const [scrubTime, setScrubTime] = useState(0);
   const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
   const [activeSubtitleText, setActiveSubtitleText] = useState<string | null>(null);
+  // Hold-to-speed-up. The boosted rate is applied to the player directly and kept
+  // out of `playbackRate`, so the manual +/- control keeps showing (and restoring
+  // to) the user's chosen base rate.
+  const [speedBoostActive, setSpeedBoostActive] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const longPressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speedBoostActiveRef = useRef(false);
+  const playbackRateRef = useRef(1);
+  const activePointerCountRef = useRef(0);
+  const suppressNextBackgroundTapRef = useRef(false);
+  const boostedRate = longPressSpeedTenths / 10;
   const lastLoadedUriRef = useRef(video.uri);
   const activeVideoUriRef = useRef(video.uri);
   const subtitleCuesRef = useRef<SubtitleCue[]>([]);
@@ -124,11 +150,19 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setSubtitleCues([]);
     setActiveSubtitleText(null);
     setScrubPreviewSource(null);
+    setLoadError(null);
+    // Auto-advance can be triggered *by* fast-forwarding to the end, so drop any
+    // live boost before it carries into the next video.
+    releaseSpeedBoost();
   }, [video.uri]);
 
   useEffect(() => {
     scrubTimeRef.current = scrubTime;
   }, [scrubTime]);
+
+  useEffect(() => {
+    playbackRateRef.current = playbackRate;
+  }, [playbackRate]);
 
   useEffect(() => {
     subtitleCuesRef.current = subtitleCues;
@@ -219,6 +253,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
       previewRequestInFlightRef.current = false;
       queuedPreviewTimeRef.current = null;
       previewThumbnailRequestIdRef.current += 1;
+
+      if (longPressTimeoutRef.current) {
+        clearTimeout(longPressTimeoutRef.current);
+        longPressTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -226,6 +265,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     const handlePlaybackInterruption = () => {
       playbackInterruptedRef.current = true;
       appHasFocusRef.current = false;
+      cancelSpeedBoost();
       clearScrubPreview();
       setIsScrubbing(false);
       setIsControlsLocked(false);
@@ -285,6 +325,20 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
   useEventListener(player, 'playingChange', ({ isPlaying }) => {
     setIsPlaying(isPlaying);
+  });
+
+  useEventListener(player, 'statusChange', ({ status, error }) => {
+    // A missing/corrupt file otherwise just sits on a black frame with no
+    // message. Surface it and reveal the controls so Back is reachable.
+    if (status === 'error') {
+      setLoadError(error?.message ?? 'This video could not be played.');
+      setControlsVisible(true);
+      return;
+    }
+
+    if (status === 'readyToPlay') {
+      setLoadError(null);
+    }
   });
 
   useEventListener(player, 'sourceLoad', ({ duration }) => {
@@ -463,7 +517,11 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
   function updatePlaybackRate(nextRate: number) {
     const normalizedRate = clampPlaybackRate(nextRate);
-    player.playbackRate = normalizedRate;
+    // While boosting, the hold owns the player's rate; the new base rate is
+    // applied on release.
+    if (!speedBoostActiveRef.current) {
+      player.playbackRate = normalizedRate;
+    }
     setPlaybackRate(normalizedRate);
     showControls();
   }
@@ -484,6 +542,44 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
 
     playbackInterruptedRef.current = false;
     player.play();
+  }
+
+  // Applies the configured long-press rate as an absolute rate (not a multiplier
+  // of playbackRate), bypassing clampPlaybackRate because the boost ceiling (up
+  // to 3.0x) is above the manual control's 2.0x max.
+  function engageSpeedBoost() {
+    longPressTimeoutRef.current = null;
+
+    if (!player.playing || isScrubbing) {
+      return;
+    }
+
+    speedBoostActiveRef.current = true;
+    // The release of a hold must not toggle controls or seed a double tap.
+    suppressNextBackgroundTapRef.current = true;
+    player.playbackRate = boostedRate;
+    setSpeedBoostActive(true);
+    setControlsVisible(false);
+  }
+
+  // Restores the base rate. Idempotent, so every teardown path can call it.
+  function releaseSpeedBoost() {
+    if (!speedBoostActiveRef.current) {
+      return;
+    }
+
+    speedBoostActiveRef.current = false;
+    player.playbackRate = playbackRateRef.current;
+    setSpeedBoostActive(false);
+  }
+
+  function cancelSpeedBoost() {
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+
+    releaseSpeedBoost();
   }
 
   function clearPendingBackgroundTap() {
@@ -620,34 +716,72 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setControlsVisible(false);
   }
 
+  function cancelPendingLongPress() {
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+  }
+
   function handleBackgroundResponderGrant(event: GestureResponderEvent) {
     updateBackgroundGestureTouchCount(event);
     clearAutoHideTimer();
+    activePointerCountRef.current = Math.max(event.nativeEvent.touches.length, 1);
+
+    // Only a single-finger hold on playing video boosts. Multi-finger gestures
+    // (lock/unlock) never do.
+    if (activePointerCountRef.current === 1 && player.playing && !isScrubbing) {
+      cancelPendingLongPress();
+      longPressTimeoutRef.current = setTimeout(engageSpeedBoost, LONG_PRESS_BOOST_DELAY_MS);
+    }
   }
 
   function handleBackgroundResponderTouchStart(event: GestureResponderEvent) {
     updateBackgroundGestureTouchCount(event);
+    activePointerCountRef.current = Math.max(event.nativeEvent.touches.length, activePointerCountRef.current);
+
+    // A second finger arriving cancels the pending boost so a two-finger tap can
+    // never boost.
+    if (activePointerCountRef.current > 1) {
+      cancelPendingLongPress();
+    }
+  }
+
+  function finishBackgroundGesture(singleTapAction: () => void, event: GestureResponderEvent) {
+    updateBackgroundGestureTouchCount(event);
+    cancelPendingLongPress();
+    activePointerCountRef.current = 0;
+
+    const wasBoosting = speedBoostActiveRef.current;
+    releaseSpeedBoost();
+
+    const touchCount = backgroundGestureTouchCountRef.current || 1;
+    resetBackgroundGestureTouchCount();
+
+    // The release of a hold must not toggle controls or seed a phantom tap.
+    if (wasBoosting || suppressNextBackgroundTapRef.current) {
+      suppressNextBackgroundTapRef.current = false;
+      resumeAutoHideAfterBackgroundGesture();
+      return;
+    }
+
+    handleBackgroundTap(singleTapAction, touchCount);
+    resumeAutoHideAfterBackgroundGesture();
   }
 
   function handleVisibleBackgroundResponderRelease(event: GestureResponderEvent) {
-    updateBackgroundGestureTouchCount(event);
-    const touchCount = backgroundGestureTouchCountRef.current || 1;
-    resetBackgroundGestureTouchCount();
-
-    handleBackgroundTap(handleHideControls, touchCount);
-    resumeAutoHideAfterBackgroundGesture();
+    finishBackgroundGesture(handleHideControls, event);
   }
 
   function handleHiddenBackgroundResponderRelease(event: GestureResponderEvent) {
-    updateBackgroundGestureTouchCount(event);
-    const touchCount = backgroundGestureTouchCountRef.current || 1;
-    resetBackgroundGestureTouchCount();
-
-    handleBackgroundTap(handleToggleControls, touchCount);
-    resumeAutoHideAfterBackgroundGesture();
+    finishBackgroundGesture(handleToggleControls, event);
   }
 
   function handleBackgroundResponderTerminate() {
+    cancelPendingLongPress();
+    activePointerCountRef.current = 0;
+    releaseSpeedBoost();
+    suppressNextBackgroundTapRef.current = false;
     resetBackgroundGestureTouchCount();
     resumeAutoHideAfterBackgroundGesture();
   }
@@ -704,6 +838,10 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
     setControlsVisible(true);
   }
 
+  const subtitleTextSizeStyle = {
+    fontSize: subtitleFontSize,
+    lineHeight: (subtitleFontSize * SUBTITLE_BASE_LINE_HEIGHT) / SUBTITLE_BASE_FONT_SIZE,
+  };
   const displayedTime = isScrubbing ? scrubTime : currentTime;
   const duration = currentDurationRef.current;
   const remainingTime = Math.max(duration - displayedTime, 0);
@@ -742,6 +880,7 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
                 key={`${translateX},${translateY},${index}`}
                 style={[
                   styles.subtitleText,
+                  subtitleTextSizeStyle,
                   styles.subtitleOutline,
                   { transform: [{ translateX }, { translateY }] },
                 ]}
@@ -749,8 +888,22 @@ export function PlayerScreen({ currentIndex, exitOrientationLock, onClose, onSel
                 {activeSubtitleText}
               </Text>
             ))}
-            <Text style={styles.subtitleText}>{activeSubtitleText}</Text>
+            <Text style={[styles.subtitleText, subtitleTextSizeStyle]}>{activeSubtitleText}</Text>
           </View>
+        </View>
+      ) : null}
+
+      {speedBoostActive ? (
+        <View pointerEvents="none" style={[styles.speedBoostBadge, { top: insets.top + 56 }]}>
+          <Text style={styles.speedBoostBadgeText}>{boostedRate.toFixed(1)}{'\u00d7'}</Text>
+          <PlayIcon />
+        </View>
+      ) : null}
+
+      {loadError ? (
+        <View pointerEvents="none" style={styles.loadErrorOverlay}>
+          <Text style={styles.loadErrorIcon}>{'\u26A0'}</Text>
+          <Text style={styles.loadErrorText}>{loadError}</Text>
         </View>
       ) : null}
 
@@ -956,6 +1109,41 @@ const styles = StyleSheet.create({
   },
   showTapArea: {
     ...StyleSheet.absoluteFillObject,
+  },
+  speedBoostBadge: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(8,12,16,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  speedBoostBadgeText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  loadErrorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingHorizontal: 32,
+  },
+  loadErrorIcon: {
+    color: '#fff',
+    fontSize: 40,
+  },
+  loadErrorText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   subtitleOverlay: {
     position: 'absolute',

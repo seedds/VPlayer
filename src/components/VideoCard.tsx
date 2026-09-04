@@ -13,6 +13,7 @@ type VideoCardProps = {
   onDelete: () => void;
   onLongPress: () => void;
   onPlay: () => void;
+  onRename: () => void;
   onSwipeableClose?: () => void;
   onSwipeableOpen?: (close: () => void) => void;
   savedPositionSeconds?: number;
@@ -28,6 +29,7 @@ export function VideoCard({
   onDelete,
   onLongPress,
   onPlay,
+  onRename,
   onSwipeableClose,
   onSwipeableOpen,
   savedPositionSeconds,
@@ -126,7 +128,16 @@ export function VideoCard({
 
   function renderRightActions() {
     return (
-      <View style={styles.deleteActionWrap}>
+      <View style={styles.rightActionsWrap}>
+        <Pressable
+          onPress={() => {
+            swipeableRef.current?.close();
+            onRename();
+          }}
+          style={({ pressed }) => [styles.renameAction, pressed && styles.renameActionPressed]}
+        >
+          <Text style={styles.renameActionLabel}>Rename</Text>
+        </Pressable>
         <Pressable
           onPress={() => {
             swipeableRef.current?.close();
@@ -308,8 +319,23 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'center',
   },
-  deleteActionWrap: {
-    width: 88,
+  rightActionsWrap: {
+    flexDirection: 'row',
+    width: 176,
+  },
+  renameAction: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1f6f68',
+  },
+  renameActionPressed: {
+    backgroundColor: '#175551',
+  },
+  renameActionLabel: {
+    color: '#f2fbf9',
+    fontSize: 13,
+    fontWeight: '800',
   },
   deleteAction: {
     flex: 1,

@@ -38,6 +38,24 @@ export function isAllowedSubtitleFileName(fileName: string): boolean {
   return ALLOWED_SUBTITLE_EXTENSIONS.includes(getFileExtension(fileName));
 }
 
+// A rename must not strip the extension a video or subtitle needs: sanitizeFileName
+// preserves whatever it is given, so `ep1.mp4` -> `ep1` would silently produce a
+// non-playable `file`. Changing between two allowed video extensions is fine.
+export function renamePreservesKind(originalName: string, nextName: string): boolean {
+  const wasVideo = isAllowedVideoFileName(originalName);
+  const wasSubtitle = isAllowedSubtitleFileName(originalName);
+
+  if (wasVideo) {
+    return isAllowedVideoFileName(nextName);
+  }
+
+  if (wasSubtitle) {
+    return isAllowedSubtitleFileName(nextName);
+  }
+
+  return true;
+}
+
 export function sanitizeFolderName(input: string): string {
   const cleaned = input.normalize('NFC').replace(/[^\p{L}\p{M}\p{N}._ -]/gu, '_').replace(/\s+/g, ' ').trim();
   const normalized = cleaned.replace(/^\.+$/g, '').replace(/\.+$/g, '').trim();
@@ -296,6 +314,12 @@ export async function renameLibraryItem(
   }
 
   const sanitizedName = entryType === 'folder' ? sanitizeFolderName(newName) : sanitizeFileName(newName);
+
+  if (entryType === 'file' && !renamePreservesKind(target.name, sanitizedName)) {
+    const extension = getFileExtension(target.name);
+    throw new Error(`Keep the ${extension} extension so the file stays playable.`);
+  }
+
   const nextRelativePath = joinRelativePath(target.parentPath, sanitizedName);
 
   if (nextRelativePath === target.relativePath) {
