@@ -14,24 +14,28 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  type StyleProp,
   Text,
   TextInput,
   useWindowDimensions,
   View,
+  type ViewStyle,
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
+import { Platform } from 'react-native';
 
 import { FolderPickerModal } from './src/components/FolderPickerModal';
 import { PlayerScreen } from './src/components/PlayerScreen';
 import { PromptModal } from './src/components/PromptModal';
 import { VideoCard } from './src/components/VideoCard';
-import { isAndroidTabletLayout } from './src/lib/device';
 import { formatBytes, formatDate, getUploadProgress, normalizePort } from './src/lib/format';
 import {
   clampSetting,
+  DEFAULT_SETTINGS,
   getSettings,
-  SETTING_LIMITS,
+  SETTING_META,
   type SettingKey,
   type Settings,
   updateSettings,
@@ -42,9 +46,9 @@ import {
   getAllPlaybackState,
   type PlaybackStateMap,
 } from './src/lib/playbackState';
-import { forgetProbedUris, hydrateVideos } from './src/lib/mediaHydration';
-import { relinkVideoArtifacts } from './src/lib/videoArtifacts';
-import { deleteThumbnailForVideo, pruneThumbnailCache } from './src/lib/videoThumbnails';
+import { hydrateVideos } from './src/lib/mediaHydration';
+import { forgetVideoArtifacts, relinkVideoArtifacts } from './src/lib/videoArtifacts';
+import { pruneThumbnailCache } from './src/lib/videoThumbnails';
 import type { LibraryItem, UploadActivity, VideoItem } from './src/lib/types';
 import {
   collectVideos,
@@ -54,7 +58,6 @@ import {
   getFileExtension,
   getLibraryItem,
   getParentPath,
-  getVideoItems,
   listAllVideoItems,
   listLibraryItems,
   moveLibraryItem,
@@ -67,10 +70,12 @@ type ButtonTone = 'primary' | 'danger';
 type RootStackParamList = {
   MainTabs: undefined;
   Player: undefined;
-  UploadConcurrencySettings: undefined;
-  SubtitleSizeSettings: undefined;
-  LongPressSpeedSettings: undefined;
+  SettingPicker: { key: SettingKey };
 };
+
+function isAndroidTabletLayout(width: number, height: number): boolean {
+  return Platform.OS === 'android' && Math.min(width, height) >= 600;
+}
 
 type MainTabParamList = {
   Library: undefined;
@@ -89,7 +94,36 @@ function createUploadActivity(status: UploadActivity['status'], message: string)
 
 const INITIAL_ACTIVITY = createUploadActivity('idle', 'Starting local server...');
 
-const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
+type ConfirmDestructiveOptions = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  failureTitle: string;
+  failureMessage: string;
+  action: () => Promise<void>;
+};
+
+// One confirm-then-run-with-failure-alert flow for the destructive library
+// actions (delete video, delete/clear selection, clear all history), which were
+// five near-identical Alert.alert blocks.
+function confirmDestructive({ title, message, confirmLabel, failureTitle, failureMessage, action }: ConfirmDestructiveOptions) {
+  Alert.alert(title, message, [
+    { text: 'Cancel', style: 'cancel' },
+    {
+      text: confirmLabel,
+      style: 'destructive',
+      onPress: () => {
+        void (async () => {
+          try {
+            await action();
+          } catch (error) {
+            Alert.alert(failureTitle, error instanceof Error ? error.message : failureMessage);
+          }
+        })();
+      },
+    },
+  ]);
+}
 
 // Full name with the base selected (extension preserved but not highlighted),
 // matching the Flutter rename prompt so the part that must be kept is visible.
@@ -119,7 +153,6 @@ export default function App() {
   const [playbackStateByUri, setPlaybackStateByUri] = useState<PlaybackStateMap>({});
   const [thumbnailUriByVideo, setThumbnailUriByVideo] = useState<Record<string, string>>({});
   const [selectedVideoUri, setSelectedVideoUri] = useState<string | null>(null);
-  const [selectionMode, setSelectionMode] = useState(false);
   const [selectedVideoUris, setSelectedVideoUris] = useState<Set<string>>(() => new Set());
   const [currentFolderPath, setCurrentFolderPath] = useState<string | null>(null);
   const [activity, setActivity] = useState<UploadActivity>(INITIAL_ACTIVITY);
@@ -132,24 +165,22 @@ export default function App() {
   const [serverLibraryRevision, setServerLibraryRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [portInput, setPortInput] = useState(String(DEFAULT_SERVER_PORT));
-  const [settings, setSettings] = useState<Settings>(() => ({
-    maxParallelUploads: SETTING_LIMITS.maxParallelUploads.default,
-    subtitleFontSize: SETTING_LIMITS.subtitleFontSize.default,
-    longPressSpeedTenths: SETTING_LIMITS.longPressSpeedTenths.default,
-  }));
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const { maxParallelUploads, subtitleFontSize, longPressSpeedTenths } = settings;
   // In-app library-management dialogs (Android has no Alert.prompt).
   const [newFolderVisible, setNewFolderVisible] = useState(false);
   const [renameTarget, setRenameTarget] = useState<LibraryItem | null>(null);
   const [moveVisible, setMoveVisible] = useState(false);
   const currentFolderPathRef = useRef<string | null>(null);
-  const maxParallelUploadsRef = useRef(SETTING_LIMITS.maxParallelUploads.default);
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
 
   const isAndroidTablet = useMemo(() => isAndroidTabletLayout(width, height), [height, width]);
   const progress = getUploadProgress(activity);
   const serverUrl = serverRunning && ipAddress && activePort ? `http://${ipAddress}:${activePort}` : null;
-  const videoItems = useMemo(() => getVideoItems(videos), [videos]);
+  const videoItems = useMemo(
+    () => videos.filter((item): item is VideoItem => item.kind === 'video'),
+    [videos],
+  );
   const selectedIndex = useMemo(() => {
     if (!selectedVideoUri) {
       return null;
@@ -160,23 +191,29 @@ export default function App() {
   }, [selectedVideoUri, videoItems]);
   const selectedVideo = selectedIndex !== null ? videoItems[selectedIndex] ?? null : null;
   const selectedCount = selectedVideoUris.size;
+  const selectionMode = selectedCount > 0;
   const selectedItems = useMemo(() => videos.filter((video) => selectedVideoUris.has(video.uri)), [selectedVideoUris, videos]);
   const allSelected = videos.length > 0 && selectedCount === videos.length;
   const shouldKeepAwakeForUpload = activity.activeUploads.length > 0;
 
+  // The server reads this only when rendering the upload page, so keeping it in
+  // sync via this one effect is sufficient — no ref or start() parameter needed.
   useEffect(() => {
-    currentFolderPathRef.current = currentFolderPath;
-  }, [currentFolderPath]);
-
-  useEffect(() => {
-    maxParallelUploadsRef.current = maxParallelUploads;
     localUploadServer.setMaxParallelUploads(maxParallelUploads);
   }, [maxParallelUploads]);
 
+  const refreshLibraryRequestIdRef = useRef(0);
+
   const refreshLibrary = useCallback(async (path: string | null = currentFolderPathRef.current) => {
+    // Ignore a slow load whose folder the user has since navigated away from:
+    // focus/AppState/onLibraryChanged/beforeRemove can all overlap, and a stale
+    // result landing last would otherwise revert the visible folder.
+    const requestId = refreshLibraryRequestIdRef.current + 1;
+    refreshLibraryRequestIdRef.current = requestId;
+
     async function loadPath(targetPath: string | null): Promise<void> {
       if (targetPath) {
-        const folder = await getLibraryItem(targetPath, 'folder');
+        const folder = await getLibraryItem(targetPath);
 
         if (!folder || folder.kind !== 'folder') {
           await loadPath(getParentPath(targetPath));
@@ -185,6 +222,11 @@ export default function App() {
       }
 
       const [items, playbackState] = await Promise.all([listLibraryItems(targetPath), getAllPlaybackState()]);
+
+      if (refreshLibraryRequestIdRef.current !== requestId) {
+        return;
+      }
+
       currentFolderPathRef.current = targetPath;
       setCurrentFolderPath(targetPath);
       setVideos(items);
@@ -194,41 +236,45 @@ export default function App() {
     await loadPath(path || null);
   }, []);
 
+  // Applies one probe result to in-memory state: caches the thumbnail and, if the
+  // probe found a duration, records it. Shared by both hydration passes.
+  const applyProbeResult = useCallback(
+    (video: VideoItem, result: { thumbnailUri: string | null; durationSeconds: number | null }) => {
+      if (result.thumbnailUri) {
+        setThumbnailUriByVideo((current) => ({ ...current, [video.uri]: result.thumbnailUri as string }));
+      }
+
+      if (result.durationSeconds !== null) {
+        setPlaybackStateByUri((current) => {
+          const entry = current[video.uri];
+          const nextDuration = result.durationSeconds as number;
+
+          if (entry?.durationSeconds === nextDuration) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [video.uri]: {
+              durationSeconds: nextDuration,
+              hasStartedPlayback: entry?.hasStartedPlayback ?? false,
+              positionSeconds: entry?.positionSeconds ?? 0,
+              updatedAt: entry?.updatedAt ?? Date.now(),
+            },
+          };
+        });
+      }
+    },
+    [],
+  );
+
   // Probes the current folder's videos (thumbnail + duration) as the user
-  // navigates. Cheap: mediaHydration skips URIs already probed this session, so
+  // navigates. Cheap: mediaHydration skips files already probed this session, so
   // re-entering a folder does no work.
-  const hydrateCurrentFolder = useCallback((items: VideoItem[]): (() => void) => {
-    const handle = hydrateVideos(items, { concurrency: THUMBNAIL_HYDRATION_CONCURRENCY }, {
-      onResult: (video, result) => {
-        if (result.thumbnailUri) {
-          setThumbnailUriByVideo((current) => ({ ...current, [video.uri]: result.thumbnailUri as string }));
-        }
-
-        if (result.durationSeconds !== null) {
-          setPlaybackStateByUri((current) => {
-            const entry = current[video.uri];
-            const nextDuration = result.durationSeconds as number;
-
-            if (entry?.durationSeconds === nextDuration) {
-              return current;
-            }
-
-            return {
-              ...current,
-              [video.uri]: {
-                durationSeconds: nextDuration,
-                hasStartedPlayback: entry?.hasStartedPlayback ?? false,
-                positionSeconds: entry?.positionSeconds ?? 0,
-                updatedAt: entry?.updatedAt ?? Date.now(),
-              },
-            };
-          });
-        }
-      },
-    });
-
-    return handle.cancel;
-  }, []);
+  const hydrateCurrentFolder = useCallback(
+    (items: VideoItem[]): (() => void) => hydrateVideos(items, applyProbeResult).cancel,
+    [applyProbeResult],
+  );
 
   const refreshNetwork = useCallback(async () => {
     try {
@@ -252,12 +298,11 @@ export default function App() {
   }, []);
 
   const startServer = useCallback(
-    async (port: number, configuredMaxParallelUploads = maxParallelUploadsRef.current) => {
+    async (port: number) => {
       try {
         setActivity(createUploadActivity('idle', `Starting server on port ${port}...`));
 
         await localUploadServer.start({
-          maxParallelUploads: configuredMaxParallelUploads,
           port,
           onActivity: setActivity,
           onLibraryChanged: async () => {
@@ -268,13 +313,13 @@ export default function App() {
           },
         });
 
-        const reportedPort = localUploadServer.getPort();
-        const resolvedPort = reportedPort && reportedPort >= 1025 && reportedPort <= 65535 ? reportedPort : port;
+        // The server already validated the port and emitted "Server ready"; trust
+        // its reported port rather than re-checking and re-announcing here.
+        const resolvedPort = localUploadServer.getPort() ?? port;
 
         setPortInput(String(resolvedPort));
         setActivePort(resolvedPort);
         setServerRunning(true);
-        setActivity(createUploadActivity('idle', `Server ready on port ${resolvedPort}.`));
         await refreshNetwork();
       } catch (error) {
         setActivePort(null);
@@ -285,11 +330,11 @@ export default function App() {
     [refreshLibrary, refreshNetwork],
   );
 
-  const stopServer = useCallback(async () => {
+  const stopServer = async () => {
     await localUploadServer.stop();
     setActivePort(null);
     setServerRunning(false);
-  }, []);
+  };
 
   useEffect(() => {
     setSelectedVideoUris((current) => {
@@ -305,12 +350,6 @@ export default function App() {
   }, [videos]);
 
   useEffect(() => {
-    if (selectionMode && selectedCount === 0) {
-      setSelectionMode(false);
-    }
-  }, [selectedCount, selectionMode]);
-
-  useEffect(() => {
     void ScreenOrientation.lockAsync(
       isAndroidTablet ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP,
     );
@@ -322,7 +361,6 @@ export default function App() {
     async function bootstrap() {
       try {
         const loadedSettings = await getSettings();
-        maxParallelUploadsRef.current = loadedSettings.maxParallelUploads;
         localUploadServer.setMaxParallelUploads(loadedSettings.maxParallelUploads);
 
         if (isMounted) {
@@ -339,7 +377,7 @@ export default function App() {
 
         setLoading(false);
 
-        await startServer(DEFAULT_SERVER_PORT, loadedSettings.maxParallelUploads);
+        await startServer(DEFAULT_SERVER_PORT);
       } catch (error) {
         if (isMounted) {
           setActivity(createUploadActivity('error', error instanceof Error ? error.message : 'App startup failed.'));
@@ -359,40 +397,37 @@ export default function App() {
     };
   }, [refreshLibrary, refreshNetwork, startServer]);
 
-  // Deletes all artifacts (playback progress, cached thumbnail, in-memory
-  // thumbnail entry, session probe record) for a set of videos. Used when the
-  // videos themselves are being deleted.
-  const forgetVideoArtifacts = useCallback(async (cleanupVideos: VideoItem[]) => {
+  // Deletes on-disk artifacts (playback progress, cached thumbnail) for a set of
+  // videos being deleted, then drops their in-memory thumbnail entries. The probe
+  // cache needs no eviction: it is keyed on file identity, so a re-uploaded file
+  // (new size/mtime) re-probes on its own.
+  const forgetArtifacts = async (cleanupVideos: VideoItem[]) => {
     if (cleanupVideos.length === 0) {
       return;
     }
 
-    const uris = cleanupVideos.map((video) => video.uri);
-    await clearPlaybackProgressForUris(uris);
-    await Promise.all(cleanupVideos.map((video) => deleteThumbnailForVideo(video).catch(() => undefined)));
-    forgetProbedUris(uris);
+    await forgetVideoArtifacts(cleanupVideos);
     setThumbnailUriByVideo((current) => {
       const next = { ...current };
 
-      for (const uri of uris) {
-        delete next[uri];
+      for (const video of cleanupVideos) {
+        delete next[video.uri];
       }
 
       return next;
     });
-  }, []);
+  };
 
-  // Re-keys artifacts (playback progress, thumbnails, session probe records, and
-  // the in-memory thumbnail map) from old URIs to new ones after a rename/move,
-  // so a half-watched video keeps its position and thumbnail.
-  const relinkArtifacts = useCallback(async (oldVideos: VideoItem[], oldRootUri: string, newRootUri: string) => {
+  // Re-keys artifacts (playback progress, thumbnails, and the in-memory thumbnail
+  // map) from old URIs to new ones after a rename/move, so a half-watched video
+  // keeps its position and thumbnail.
+  const relinkArtifacts = async (oldVideos: VideoItem[], oldRootUri: string, newRootUri: string) => {
     const moves = await relinkVideoArtifacts(oldVideos, oldRootUri, newRootUri);
 
     if (moves.length === 0) {
       return;
     }
 
-    forgetProbedUris(moves.map((move) => move.oldUri));
     setThumbnailUriByVideo((current) => {
       const next = { ...current };
 
@@ -405,256 +440,180 @@ export default function App() {
 
       return next;
     });
-  }, []);
+  };
 
-  const handleDeleteVideo = useCallback(
-    (video: LibraryItem) => {
-      Alert.alert(video.kind === 'folder' ? 'Delete folder?' : 'Delete file?', video.name, [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              try {
-                const cleanupVideos = Array.from(
-                  new Map((await collectVideos(video)).map((item) => [item.uri, item])).values(),
-                );
-
-                await forgetVideoArtifacts(cleanupVideos);
-                await deleteLibraryItem(video.uri);
-                await refreshLibrary();
-              } catch (error) {
-                Alert.alert('Delete failed', error instanceof Error ? error.message : 'Could not delete the file.');
-              }
-            })();
-          },
-        },
-      ]);
-    },
-    [forgetVideoArtifacts, refreshLibrary],
-  );
-
-  const handlePlayVideo = useCallback(
-    (uri: string) => {
-      setSelectedVideoUri(uri);
-
-      if (navigationRef.isReady()) {
-        navigationRef.navigate('Player');
-      }
-    },
-    [navigationRef],
-  );
-
-  const handleSelectVideoIndex = useCallback(
-    (index: number) => {
-      setSelectedVideoUri(videoItems[index]?.uri ?? null);
-    },
-    [videoItems],
-  );
-
-  const handleCancelSelection = useCallback(() => {
-    setSelectionMode(false);
-    setSelectedVideoUris(new Set());
-  }, []);
-
-  const handleDeleteSelected = useCallback(() => {
-    if (selectedCount === 0) {
-      return;
-    }
-
-    Alert.alert('Delete selected items?', `${selectedCount} item${selectedCount === 1 ? '' : 's'} will be removed.`, [
-      {
-        text: 'Cancel',
-        style: 'cancel',
+  const handleDeleteVideo = (video: LibraryItem) => {
+    confirmDestructive({
+      title: video.kind === 'folder' ? 'Delete folder?' : 'Delete file?',
+      message: video.name,
+      confirmLabel: 'Delete',
+      failureTitle: 'Delete failed',
+      failureMessage: 'Could not delete the file.',
+      action: async () => {
+        const cleanupVideos = await collectVideos(video);
+        await forgetArtifacts(cleanupVideos);
+        await deleteLibraryItem(video.uri);
+        await refreshLibrary();
       },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              try {
-                const targets = videos.filter((video) => selectedVideoUris.has(video.uri));
-                const cleanupVideos = Array.from(
-                  new Map((await Promise.all(targets.map((video) => collectVideos(video)))).flat().map((video) => [video.uri, video])).values(),
-                );
+    });
+  };
 
-                await forgetVideoArtifacts(cleanupVideos);
+  const handlePlayVideo = (uri: string) => {
+    setSelectedVideoUri(uri);
 
-                await Promise.all(
-                  targets.map(async (video) => {
-                    await deleteLibraryItem(video.uri);
-                  }),
-                );
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('Player');
+    }
+  };
 
-              handleCancelSelection();
-              await refreshLibrary();
-            } catch (error) {
-              Alert.alert('Delete failed', error instanceof Error ? error.message : 'Could not delete the selected files.');
-            }
-            })();
-          },
-        },
-      ]);
-  }, [forgetVideoArtifacts, handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
+  const handleSelectVideoIndex = (index: number) => {
+    setSelectedVideoUri(videoItems[index]?.uri ?? null);
+  };
 
-  const handleClearSelectedPlayback = useCallback(() => {
-    if (selectedCount === 0) {
+  const handleCancelSelection = () => {
+    setSelectedVideoUris(new Set());
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedItems.length === 0) {
       return;
     }
 
-    Alert.alert(
-      'Clear playback history?',
-      'Saved playback positions will be reset for videos inside the selected items.',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Clear',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              try {
-                const targets = videos.filter((video) => selectedVideoUris.has(video.uri));
-                const selectedVideos = Array.from(
-                  new Map((await Promise.all(targets.map((video) => collectVideos(video)))).flat().map((video) => [video.uri, video])).values(),
-                );
+    confirmDestructive({
+      title: 'Delete selected items?',
+      message: `${selectedItems.length} item${selectedItems.length === 1 ? '' : 's'} will be removed.`,
+      confirmLabel: 'Delete',
+      failureTitle: 'Delete failed',
+      failureMessage: 'Could not delete the selected files.',
+      action: async () => {
+        const cleanupVideos = (await Promise.all(selectedItems.map((video) => collectVideos(video)))).flat();
 
-                await clearPlaybackProgressForUris(selectedVideos.map((video) => video.uri));
-                handleCancelSelection();
-                await refreshLibrary();
-              } catch (error) {
-                Alert.alert('Clear failed', error instanceof Error ? error.message : 'Could not clear playback history for the selected files.');
-              }
-            })();
-          },
-        },
-      ],
-    );
-  }, [handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
-
-  const handleCreateFolder = useCallback(
-    (name: string) => {
-      setNewFolderVisible(false);
-
-      void (async () => {
-        try {
-          await createLibraryFolder(currentFolderPathRef.current, name);
-          await refreshLibrary();
-        } catch (error) {
-          Alert.alert('New folder failed', error instanceof Error ? error.message : 'Could not create the folder.');
-        }
-      })();
-    },
-    [refreshLibrary],
-  );
-
-  const handleRenameItem = useCallback(
-    (name: string) => {
-      const target = renameTarget;
-      setRenameTarget(null);
-
-      if (!target) {
-        return;
-      }
-
-      void (async () => {
-        try {
-          const entryType = target.kind === 'folder' ? 'folder' : 'file';
-          const cleanupVideos = Array.from(
-            new Map((await collectVideos(target)).map((item) => [item.uri, item])).values(),
-          );
-
-          const renamed = await renameLibraryItem(target.relativePath, entryType, name);
-
-          if (renamed.uri !== target.uri) {
-            await relinkArtifacts(cleanupVideos, target.uri, renamed.uri);
-          }
-
-          await refreshLibrary();
-        } catch (error) {
-          Alert.alert('Rename failed', error instanceof Error ? error.message : 'Could not rename the item.');
-        }
-      })();
-    },
-    [refreshLibrary, relinkArtifacts, renameTarget],
-  );
-
-  const handleMoveSelected = useCallback(
-    (destinationPath: string | null) => {
-      setMoveVisible(false);
-      const targets = selectedItems;
-
-      if (targets.length === 0) {
-        return;
-      }
-
-      void (async () => {
-        const failures: string[] = [];
-
-        // Diverges from the server's move (which stops on first failure): move
-        // what we can and report the rest, so one collision doesn't abandon a batch.
-        for (const target of targets) {
-          try {
-            const entryType = target.kind === 'folder' ? 'folder' : 'file';
-            const cleanupVideos = Array.from(
-              new Map((await collectVideos(target)).map((item) => [item.uri, item])).values(),
-            );
-
-            const moved = await moveLibraryItem(target.relativePath, entryType, destinationPath);
-
-            if (moved.uri !== target.uri) {
-              await relinkArtifacts(cleanupVideos, target.uri, moved.uri);
-            }
-          } catch (error) {
-            failures.push(`${target.name}: ${error instanceof Error ? error.message : 'move failed'}`);
-          }
-        }
-
+        await forgetArtifacts(cleanupVideos);
+        await Promise.all(selectedItems.map((video) => deleteLibraryItem(video.uri)));
         handleCancelSelection();
         await refreshLibrary();
+      },
+    });
+  };
 
-        if (failures.length > 0) {
-          Alert.alert('Some items could not be moved', failures.join('\n'));
+  const handleClearSelectedPlayback = () => {
+    if (selectedItems.length === 0) {
+      return;
+    }
+
+    confirmDestructive({
+      title: 'Clear playback history?',
+      message: 'Saved playback positions will be reset for videos inside the selected items.',
+      confirmLabel: 'Clear',
+      failureTitle: 'Clear failed',
+      failureMessage: 'Could not clear playback history for the selected files.',
+      action: async () => {
+        const selectedVideos = (await Promise.all(selectedItems.map((video) => collectVideos(video)))).flat();
+
+        await clearPlaybackProgressForUris(selectedVideos.map((video) => video.uri));
+        handleCancelSelection();
+        await refreshLibrary();
+      },
+    });
+  };
+
+  const handleCreateFolder = (name: string) => {
+    setNewFolderVisible(false);
+
+    void (async () => {
+      try {
+        await createLibraryFolder(currentFolderPathRef.current, name);
+        await refreshLibrary();
+      } catch (error) {
+        Alert.alert('New folder failed', error instanceof Error ? error.message : 'Could not create the folder.');
+      }
+    })();
+  };
+
+  const handleRenameItem = (name: string) => {
+    const target = renameTarget;
+    setRenameTarget(null);
+
+    if (!target) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const cleanupVideos = await collectVideos(target);
+        const renamed = await renameLibraryItem(target.relativePath, name);
+
+        if (renamed.uri !== target.uri) {
+          await relinkArtifacts(cleanupVideos, target.uri, renamed.uri);
         }
-      })();
-    },
-    [handleCancelSelection, refreshLibrary, relinkArtifacts, selectedItems],
-  );
 
-  const handleToggleSelectAll = useCallback(() => {
+        await refreshLibrary();
+      } catch (error) {
+        Alert.alert('Rename failed', error instanceof Error ? error.message : 'Could not rename the item.');
+      }
+    })();
+  };
+
+  const handleMoveSelected = (destinationPath: string | null) => {
+    setMoveVisible(false);
+    const targets = selectedItems;
+
+    if (targets.length === 0) {
+      return;
+    }
+
+    void (async () => {
+      const failures: string[] = [];
+
+      // Diverges from the server's move (which stops on first failure): move
+      // what we can and report the rest, so one collision doesn't abandon a batch.
+      for (const target of targets) {
+        try {
+          const cleanupVideos = await collectVideos(target);
+          const moved = await moveLibraryItem(target.relativePath, destinationPath);
+
+          if (moved.uri !== target.uri) {
+            await relinkArtifacts(cleanupVideos, target.uri, moved.uri);
+          }
+        } catch (error) {
+          failures.push(`${target.name}: ${error instanceof Error ? error.message : 'move failed'}`);
+        }
+      }
+
+      handleCancelSelection();
+      await refreshLibrary();
+
+      if (failures.length > 0) {
+        Alert.alert('Some items could not be moved', failures.join('\n'));
+      }
+    })();
+  };
+
+  const handleToggleSelectAll = () => {
     if (allSelected) {
       handleCancelSelection();
       return;
     }
 
     setSelectedVideoUris(new Set(videos.map((video) => video.uri)));
-  }, [allSelected, handleCancelSelection, videos]);
+  };
 
-  const updateSetting = useCallback(
-    async (key: SettingKey, value: number): Promise<boolean> => {
-      const nextValue = clampSetting(key, value);
+  const updateSetting = async (key: SettingKey, value: number): Promise<boolean> => {
+    const nextValue = clampSetting(key, value);
 
-      if (nextValue === settings[key]) {
-        return true;
-      }
+    if (nextValue === settings[key]) {
+      return true;
+    }
 
-      try {
-        const saved = await updateSettings({ [key]: nextValue });
-        setSettings(saved);
-        return true;
-      } catch (error) {
-        Alert.alert('Save failed', error instanceof Error ? error.message : 'Could not save settings.');
-        return false;
-      }
-    },
-    [settings],
-  );
+    try {
+      const saved = await updateSettings({ [key]: nextValue });
+      setSettings(saved);
+      return true;
+    } catch (error) {
+      Alert.alert('Save failed', error instanceof Error ? error.message : 'Could not save settings.');
+      return false;
+    }
+  };
 
   // Effect A: probe the videos in the current folder as the user navigates.
   useEffect(() => {
@@ -683,15 +642,9 @@ export default function App() {
         return;
       }
 
-      const handle = hydrateVideos(allVideos, { concurrency: THUMBNAIL_HYDRATION_CONCURRENCY }, {
-        onResult: (video, result) => {
-          if (result.thumbnailUri) {
-            setThumbnailUriByVideo((current) => ({ ...current, [video.uri]: result.thumbnailUri as string }));
-          }
-        },
-      });
+      const handle = hydrateVideos(allVideos, applyProbeResult);
       cancelHydration = handle.cancel;
-      await handle.promise;
+      await handle.done;
 
       if (!cancelled) {
         await pruneThumbnailCache(allVideos);
@@ -704,7 +657,7 @@ export default function App() {
       cancelled = true;
       cancelHydration?.();
     };
-  }, [loading, serverLibraryRevision]);
+  }, [applyProbeResult, loading, serverLibraryRevision]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -780,10 +733,7 @@ export default function App() {
                         <View style={styles.screen}>
                           <View style={styles.libraryContentArea}>
                             {loading ? (
-                              <View style={[styles.loadingCard, styles.libraryLoadingCard]}>
-                                <ActivityIndicator size="large" color="#1f6f68" />
-                                <Text style={styles.loadingText}>Preparing storage, network, and local upload server...</Text>
-                              </View>
+                              <LoadingCard style={styles.libraryLoadingCard} />
                             ) : (
                               <LibraryView
                                 allSelected={allSelected}
@@ -833,7 +783,6 @@ export default function App() {
                                 videos={videos}
                                 onDeleteVideo={handleDeleteVideo}
                                 onLongPressVideo={(video) => {
-                                  setSelectionMode(true);
                                   setSelectedVideoUris(new Set([video.uri]));
                                 }}
                                 onPlayVideo={handlePlayVideo}
@@ -871,10 +820,7 @@ export default function App() {
                         <View style={styles.screen}>
                           <View style={styles.contentArea}>
                             {loading ? (
-                              <View style={styles.loadingCard}>
-                                <ActivityIndicator size="large" color="#1f6f68" />
-                                <Text style={styles.loadingText}>Preparing storage, network, and local upload server...</Text>
-                              </View>
+                              <LoadingCard />
                             ) : (
                               <UploadView
                                 activity={activity}
@@ -905,18 +851,11 @@ export default function App() {
                         <View style={styles.screen}>
                           <View style={styles.contentArea}>
                             {loading ? (
-                              <View style={styles.loadingCard}>
-                                <ActivityIndicator size="large" color="#1f6f68" />
-                                <Text style={styles.loadingText}>Preparing storage, network, and local upload server...</Text>
-                              </View>
+                              <LoadingCard />
                             ) : (
                               <SettingsView
-                                longPressSpeedTenths={longPressSpeedTenths}
-                                maxParallelUploads={maxParallelUploads}
-                                onOpenLongPressSpeedSettings={() => navigationRef.navigate('LongPressSpeedSettings')}
-                                onOpenSubtitleSizeSettings={() => navigationRef.navigate('SubtitleSizeSettings')}
-                                onOpenUploadConcurrencySettings={() => navigationRef.navigate('UploadConcurrencySettings')}
-                                subtitleFontSize={subtitleFontSize}
+                                settings={settings}
+                                onOpenSetting={(key) => navigationRef.navigate('SettingPicker', { key })}
                               />
                             )}
                           </View>
@@ -928,98 +867,41 @@ export default function App() {
               )}
             </RootStack.Screen>
             <RootStack.Screen
-              name="UploadConcurrencySettings"
-              options={{
+              name="SettingPicker"
+              options={({ route }) => ({
                 headerShown: true,
-                title: 'Concurrent Uploads',
+                title: SETTING_META[route.params.key].navTitle,
                 headerBackTitle: 'Settings',
                 headerShadowVisible: false,
-              }}
+              })}
             >
-              {({ navigation }) => (
-                <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
-                  <View style={styles.screen}>
-                    <View style={styles.contentArea}>
-                      <OptionPickerView
-                        options={SETTING_LIMITS.maxParallelUploads.options}
-                        selectedValue={maxParallelUploads}
-                        subtitle="Choose how many files the browser uploader can send in parallel."
-                        title="Concurrent uploads"
-                        onSelect={async (value) => {
-                          const didSave = await updateSetting('maxParallelUploads', value);
+              {({ navigation, route }) => {
+                const key = route.params.key;
+                const meta = SETTING_META[key];
 
-                          if (didSave) {
-                            navigation.goBack();
-                          }
-                        }}
-                      />
+                return (
+                  <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
+                    <View style={styles.screen}>
+                      <View style={styles.contentArea}>
+                        <OptionPickerView
+                          formatLabel={meta.formatLabel}
+                          options={meta.options}
+                          selectedValue={settings[key]}
+                          subtitle={meta.subtitle}
+                          title={meta.title}
+                          onSelect={async (value) => {
+                            const didSave = await updateSetting(key, value);
+
+                            if (didSave) {
+                              navigation.goBack();
+                            }
+                          }}
+                        />
+                      </View>
                     </View>
-                  </View>
-                </SafeAreaView>
-              )}
-            </RootStack.Screen>
-            <RootStack.Screen
-              name="SubtitleSizeSettings"
-              options={{
-                headerShown: true,
-                title: 'Subtitle Size',
-                headerBackTitle: 'Settings',
-                headerShadowVisible: false,
+                  </SafeAreaView>
+                );
               }}
-            >
-              {({ navigation }) => (
-                <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
-                  <View style={styles.screen}>
-                    <View style={styles.contentArea}>
-                      <OptionPickerView
-                        options={SETTING_LIMITS.subtitleFontSize.options}
-                        selectedValue={subtitleFontSize}
-                        subtitle="Choose how large subtitles appear during playback."
-                        title="Subtitle size"
-                        onSelect={async (value) => {
-                          const didSave = await updateSetting('subtitleFontSize', value);
-
-                          if (didSave) {
-                            navigation.goBack();
-                          }
-                        }}
-                      />
-                    </View>
-                  </View>
-                </SafeAreaView>
-              )}
-            </RootStack.Screen>
-            <RootStack.Screen
-              name="LongPressSpeedSettings"
-              options={{
-                headerShown: true,
-                title: 'Hold-to-Speed-Up',
-                headerBackTitle: 'Settings',
-                headerShadowVisible: false,
-              }}
-            >
-              {({ navigation }) => (
-                <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
-                  <View style={styles.screen}>
-                    <View style={styles.contentArea}>
-                      <OptionPickerView
-                        formatLabel={(value) => `${(value / 10).toFixed(1)}\u00d7`}
-                        options={SETTING_LIMITS.longPressSpeedTenths.options}
-                        selectedValue={longPressSpeedTenths}
-                        subtitle="Press and hold the video to temporarily play at this speed."
-                        title="Hold-to-speed-up rate"
-                        onSelect={async (value) => {
-                          const didSave = await updateSetting('longPressSpeedTenths', value);
-
-                          if (didSave) {
-                            navigation.goBack();
-                          }
-                        }}
-                      />
-                    </View>
-                  </View>
-                </SafeAreaView>
-              )}
             </RootStack.Screen>
             <RootStack.Screen
               name="Player"
@@ -1082,6 +964,15 @@ function UploadWakeLock() {
   useKeepAwake();
 
   return null;
+}
+
+function LoadingCard({ style }: { style?: StyleProp<ViewStyle> }) {
+  return (
+    <View style={[styles.loadingCard, style]}>
+      <ActivityIndicator size="large" color="#1f6f68" />
+      <Text style={styles.loadingText}>Preparing storage, network, and local upload server...</Text>
+    </View>
+  );
 }
 
 type LibraryViewProps = {
@@ -1262,7 +1153,7 @@ function LibraryView({
         onScrollBeginDrag={closeOpenSwipeRow}
         contentContainerStyle={[styles.libraryList, videos.length === 0 && styles.libraryListEmpty]}
         data={videos}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.uri}
         keyboardShouldPersistTaps="handled"
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
@@ -1391,73 +1282,56 @@ function UploadView({
 }
 
 type SettingsViewProps = {
-  longPressSpeedTenths: number;
-  maxParallelUploads: number;
-  onOpenLongPressSpeedSettings: () => void;
-  onOpenSubtitleSizeSettings: () => void;
-  onOpenUploadConcurrencySettings: () => void;
-  subtitleFontSize: number;
+  settings: Settings;
+  onOpenSetting: (key: SettingKey) => void;
 };
 
-function SettingsView({
-  longPressSpeedTenths,
-  maxParallelUploads,
-  onOpenLongPressSpeedSettings,
-  onOpenSubtitleSizeSettings,
-  onOpenUploadConcurrencySettings,
-  subtitleFontSize,
-}: SettingsViewProps) {
+// Groups the setting rows into their two panels; each row's copy comes from
+// SETTING_META, so adding a setting is a table edit rather than new JSX.
+const SETTING_PANELS: ReadonlyArray<{ title: string; subtitle: string; keys: readonly SettingKey[] }> = [
+  {
+    title: 'Upload settings',
+    subtitle: 'Control how many files the browser uploader sends at once.',
+    keys: ['maxParallelUploads'],
+  },
+  {
+    title: 'Player settings',
+    subtitle: 'Tune subtitles and the hold-to-speed-up gesture.',
+    keys: ['subtitleFontSize', 'longPressSpeedTenths'],
+  },
+];
+
+function SettingsView({ settings, onOpenSetting }: SettingsViewProps) {
   return (
     <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
-      <Panel title="Upload settings" subtitle="Control how many files the browser uploader sends at once.">
-        <View style={styles.settingSection}>
-          <Text style={styles.settingTitle}>Concurrent uploads</Text>
-          <Text style={styles.supportText}>Choose how many files the browser uploader can send in parallel.</Text>
-          <Pressable
-            onPress={onOpenUploadConcurrencySettings}
-            style={({ pressed }) => [styles.settingNavigationRow, pressed && styles.settingNavigationRowPressed]}
-          >
-            <Text style={styles.settingNavigationLabel}>Select upload count</Text>
-            <View style={styles.settingNavigationAccessory}>
-              <Text style={styles.settingNavigationValue}>{maxParallelUploads}</Text>
-              <Text style={styles.settingNavigationChevron}>{'\u203A'}</Text>
-            </View>
-          </Pressable>
-          <Text style={styles.supportText}>Refresh the browser upload page to apply changes.</Text>
-        </View>
-      </Panel>
+      {SETTING_PANELS.map((panel) => (
+        <Panel key={panel.title} title={panel.title} subtitle={panel.subtitle}>
+          {panel.keys.map((key) => {
+            const meta = SETTING_META[key];
+            const value = settings[key];
 
-      <Panel title="Player settings" subtitle="Tune subtitles and the hold-to-speed-up gesture.">
-        <View style={styles.settingSection}>
-          <Text style={styles.settingTitle}>Subtitle size</Text>
-          <Text style={styles.supportText}>Choose how large subtitles appear during playback.</Text>
-          <Pressable
-            onPress={onOpenSubtitleSizeSettings}
-            style={({ pressed }) => [styles.settingNavigationRow, pressed && styles.settingNavigationRowPressed]}
-          >
-            <Text style={styles.settingNavigationLabel}>Select subtitle size</Text>
-            <View style={styles.settingNavigationAccessory}>
-              <Text style={styles.settingNavigationValue}>{subtitleFontSize}</Text>
-              <Text style={styles.settingNavigationChevron}>{'\u203A'}</Text>
-            </View>
-          </Pressable>
-        </View>
-
-        <View style={styles.settingSection}>
-          <Text style={styles.settingTitle}>Hold-to-speed-up rate</Text>
-          <Text style={styles.supportText}>Press and hold the video to temporarily play at this speed.</Text>
-          <Pressable
-            onPress={onOpenLongPressSpeedSettings}
-            style={({ pressed }) => [styles.settingNavigationRow, pressed && styles.settingNavigationRowPressed]}
-          >
-            <Text style={styles.settingNavigationLabel}>Select speed</Text>
-            <View style={styles.settingNavigationAccessory}>
-              <Text style={styles.settingNavigationValue}>{(longPressSpeedTenths / 10).toFixed(1)}{'\u00d7'}</Text>
-              <Text style={styles.settingNavigationChevron}>{'\u203A'}</Text>
-            </View>
-          </Pressable>
-        </View>
-      </Panel>
+            return (
+              <View key={key} style={styles.settingSection}>
+                <Text style={styles.settingTitle}>{meta.title}</Text>
+                <Text style={styles.supportText}>{meta.subtitle}</Text>
+                <Pressable
+                  onPress={() => onOpenSetting(key)}
+                  style={({ pressed }) => [styles.settingNavigationRow, pressed && styles.settingNavigationRowPressed]}
+                >
+                  <Text style={styles.settingNavigationLabel}>{meta.rowLabel}</Text>
+                  <View style={styles.settingNavigationAccessory}>
+                    <Text style={styles.settingNavigationValue}>
+                      {meta.formatLabel ? meta.formatLabel(value) : value}
+                    </Text>
+                    <Text style={styles.settingNavigationChevron}>{'\u203A'}</Text>
+                  </View>
+                </Pressable>
+                {meta.footnote ? <Text style={styles.supportText}>{meta.footnote}</Text> : null}
+              </View>
+            );
+          })}
+        </Panel>
+      ))}
     </ScrollView>
   );
 }

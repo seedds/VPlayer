@@ -142,14 +142,10 @@ export function PlayerScreen({
     activeVideoUriRef.current = video.uri;
     playbackInterruptedRef.current = false;
     lastPersistedPositionRef.current = 0;
-    previewRequestInFlightRef.current = false;
-    queuedPreviewTimeRef.current = null;
-    previewThumbnailRequestIdRef.current += 1;
-    lastPreviewedTimeRef.current = null;
     pendingResumeRef.current = null;
+    clearScrubPreview();
     setSubtitleCues([]);
     setActiveSubtitleText(null);
-    setScrubPreviewSource(null);
     setLoadError(null);
     // Auto-advance can be triggered *by* fast-forwarding to the end, so drop any
     // live boost before it carries into the next video.
@@ -228,7 +224,6 @@ export function PlayerScreen({
 
   useEffect(() => {
     player.keepScreenOnWhilePlaying = true;
-    player.playbackRate = 1;
     player.preservesPitch = true;
     player.timeUpdateEventInterval = 0.5;
   }, [player]);
@@ -250,9 +245,7 @@ export function PlayerScreen({
 
       lastBackgroundTapTouchCountRef.current = 0;
       backgroundGestureTouchCountRef.current = 0;
-      previewRequestInFlightRef.current = false;
-      queuedPreviewTimeRef.current = null;
-      previewThumbnailRequestIdRef.current += 1;
+      clearScrubPreview();
 
       if (longPressTimeoutRef.current) {
         clearTimeout(longPressTimeoutRef.current);
@@ -391,10 +384,11 @@ export function PlayerScreen({
     return () => {
       cancelled = true;
     };
-    // Keyed on the video's identity fields, not the object reference: a library
-    // refresh rebuilds an equal `video` object, and depending on it would reload
-    // and re-parse the SRT on every refresh while playing.
-  }, [player, video.uri, video.parentPath, video.name]);
+    // Keyed on the video's URI, not the object reference: a library refresh
+    // rebuilds an equal `video` object, and depending on it would reload and
+    // re-parse the SRT on every refresh while playing. The parentPath/name are
+    // implied by the URI, so they add nothing as deps.
+  }, [player, video.uri]);
 
   useEffect(() => {
     const shouldAutoplay = () => appStateRef.current === 'active' && appHasFocusRef.current && !playbackInterruptedRef.current;
@@ -454,7 +448,14 @@ export function PlayerScreen({
       if (!cancelled) {
         lastLoadedUriRef.current = video.uri;
 
-        if (Number.isFinite(player.duration) && player.duration > 0) {
+        // Only apply here if the sourceLoad listener has not already consumed the
+        // pending resume for this video. Otherwise the resume runs twice and seeks
+        // back a visible ~0.5s after playback has already started.
+        if (
+          pendingResumeRef.current?.uri === video.uri &&
+          Number.isFinite(player.duration) &&
+          player.duration > 0
+        ) {
           pendingResumeRef.current = null;
           applyResumePosition(savedPosition, player.duration, shouldResumePlayback);
         }

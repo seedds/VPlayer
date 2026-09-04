@@ -1,5 +1,4 @@
 type LibraryEntry = {
-  id: string;
   name: string;
   uri: string;
   modified: number;

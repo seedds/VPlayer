@@ -2,10 +2,8 @@ import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 type PromptModalProps = {
-  cancelLabel?: string;
   confirmLabel?: string;
   initialValue?: string;
-  message?: string;
   onCancel: () => void;
   onSubmit: (value: string) => void;
   placeholder?: string;
@@ -17,10 +15,8 @@ type PromptModalProps = {
 };
 
 export function PromptModal({
-  cancelLabel = 'Cancel',
   confirmLabel = 'Save',
   initialValue = '',
-  message,
   onCancel,
   onSubmit,
   placeholder,
@@ -34,12 +30,17 @@ export function PromptModal({
   // keystroke, so renaming would only ever replace one character at a time.
   const [activeSelection, setActiveSelection] = useState<{ start: number; end: number } | undefined>(selection);
 
+  // Keyed on the `visible` rising edge only. The parent passes a fresh
+  // `selection` object every render, so depending on it (or `initialValue`) would
+  // reset the field on any App re-render while the dialog is open — every arriving
+  // thumbnail, upload chunk, or IP poll would wipe what the user has typed.
   useEffect(() => {
     if (visible) {
       setValue(initialValue);
       setActiveSelection(selection);
     }
-  }, [initialValue, selection, visible]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   const trimmed = value.trim();
 
@@ -48,7 +49,6 @@ export function PromptModal({
       <Pressable style={styles.backdrop} onPress={onCancel}>
         <Pressable style={styles.card} onPress={() => undefined}>
           <Text style={styles.title}>{title}</Text>
-          {message ? <Text style={styles.message}>{message}</Text> : null}
           <TextInput
             autoFocus
             onChangeText={(nextValue) => {
@@ -73,7 +73,7 @@ export function PromptModal({
               onPress={onCancel}
               style={({ pressed }) => [styles.button, styles.buttonSecondary, pressed && styles.buttonPressed]}
             >
-              <Text style={styles.buttonSecondaryText}>{cancelLabel}</Text>
+              <Text style={styles.buttonSecondaryText}>Cancel</Text>
             </Pressable>
             <Pressable
               disabled={!trimmed}
@@ -116,11 +116,6 @@ const styles = StyleSheet.create({
     color: '#1d1917',
     fontSize: 19,
     fontWeight: '800',
-  },
-  message: {
-    color: '#70665d',
-    fontSize: 14,
-    lineHeight: 20,
   },
   input: {
     borderRadius: 16,

@@ -1,8 +1,6 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import { createJsonFileStore } from './jsonStore';
 
-import { getDocumentRoot } from './videoLibrary';
-
-export type PlaybackStateEntry = {
+type PlaybackStateEntry = {
   durationSeconds?: number;
   hasStartedPlayback?: boolean;
   positionSeconds: number;
@@ -11,66 +9,18 @@ export type PlaybackStateEntry = {
 
 export type PlaybackStateMap = Record<string, PlaybackStateEntry>;
 
-let playbackStateCache: PlaybackStateMap | null = null;
-let playbackStateMutationQueue: Promise<void> = Promise.resolve();
-
-function getPlaybackStateFileUri(): string {
-  return `${getDocumentRoot()}playback-state.json`;
-}
-
-async function loadPlaybackState(): Promise<PlaybackStateMap> {
-  if (playbackStateCache) {
-    return playbackStateCache;
-  }
-
-  const fileUri = getPlaybackStateFileUri();
-  const info = await FileSystem.getInfoAsync(fileUri);
-
-  if (!info.exists) {
-    playbackStateCache = {};
-    return playbackStateCache;
-  }
-
-  try {
-    const raw = await FileSystem.readAsStringAsync(fileUri);
-    const parsed = JSON.parse(raw) as PlaybackStateMap;
-    playbackStateCache = parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    playbackStateCache = {};
-  }
-
-  return playbackStateCache;
-}
-
-async function writePlaybackState(nextState: PlaybackStateMap): Promise<void> {
-  playbackStateCache = nextState;
-  await FileSystem.writeAsStringAsync(getPlaybackStateFileUri(), JSON.stringify(nextState));
-}
-
-async function updatePlaybackState(updater: (state: PlaybackStateMap) => PlaybackStateMap | null): Promise<void> {
-  playbackStateMutationQueue = playbackStateMutationQueue
-    .catch(() => undefined)
-    .then(async () => {
-      const state = await loadPlaybackState();
-      const nextState = updater(state);
-
-      if (!nextState) {
-        return;
-      }
-
-      await writePlaybackState(nextState);
-    });
-
-  await playbackStateMutationQueue;
-}
+const store = createJsonFileStore<PlaybackStateMap>('playback-state.json', ({ parsed }) => ({
+  value: parsed && typeof parsed === 'object' ? (parsed as PlaybackStateMap) : {},
+  persist: false,
+}));
 
 export async function getSavedPlaybackPosition(uri: string): Promise<number> {
-  const state = await loadPlaybackState();
+  const state = await store.read();
   return state[uri]?.positionSeconds ?? 0;
 }
 
 export async function getAllPlaybackState(): Promise<PlaybackStateMap> {
-  return loadPlaybackState();
+  return store.read();
 }
 
 export async function savePlaybackPosition(uri: string, positionSeconds: number, durationSeconds?: number): Promise<void> {
@@ -78,7 +28,7 @@ export async function savePlaybackPosition(uri: string, positionSeconds: number,
     return;
   }
 
-  await updatePlaybackState((state) => {
+  await store.update((state) => {
     const previousEntry = state[uri];
 
     return {
@@ -101,7 +51,7 @@ export async function savePlaybackDuration(uri: string, durationSeconds: number)
     return;
   }
 
-  await updatePlaybackState((state) => {
+  await store.update((state) => {
     const previousEntry = state[uri];
 
     return {
@@ -116,20 +66,8 @@ export async function savePlaybackDuration(uri: string, durationSeconds: number)
   });
 }
 
-export async function clearPlaybackPosition(uri: string): Promise<void> {
-  await updatePlaybackState((state) => {
-    if (!(uri in state)) {
-      return null;
-    }
-
-    const nextState = { ...state };
-    delete nextState[uri];
-    return nextState;
-  });
-}
-
 export async function clearAllPlaybackProgress(): Promise<void> {
-  await updatePlaybackState((state) =>
+  await store.update((state) =>
     Object.fromEntries(
       Object.entries(state).map(([uri, entry]) => [
         uri,
@@ -154,7 +92,7 @@ export async function movePlaybackState(pairs: ReadonlyArray<readonly [string, s
     return;
   }
 
-  await updatePlaybackState((state) => {
+  await store.update((state) => {
     let didUpdate = false;
     const nextState = { ...state };
 
@@ -174,6 +112,8 @@ export async function movePlaybackState(pairs: ReadonlyArray<readonly [string, s
   });
 }
 
+// Resets progress (marks "new") for the given URIs without removing the entries.
+// Used by "Clear history", where the videos still exist.
 export async function clearPlaybackProgressForUris(uris: Iterable<string>): Promise<void> {
   const targetUris = new Set(uris);
 
@@ -181,7 +121,7 @@ export async function clearPlaybackProgressForUris(uris: Iterable<string>): Prom
     return;
   }
 
-  await updatePlaybackState((state) => {
+  await store.update((state) => {
     let didUpdate = false;
     const nextState = { ...state };
 
@@ -199,6 +139,30 @@ export async function clearPlaybackProgressForUris(uris: Iterable<string>): Prom
         updatedAt: Date.now(),
       } satisfies PlaybackStateEntry;
       didUpdate = true;
+    }
+
+    return didUpdate ? nextState : null;
+  });
+}
+
+// Removes playback entries entirely. Used when the videos themselves are being
+// deleted, so `playback-state.json` does not accumulate dead URIs forever.
+export async function removePlaybackEntries(uris: Iterable<string>): Promise<void> {
+  const targetUris = new Set(uris);
+
+  if (targetUris.size === 0) {
+    return;
+  }
+
+  await store.update((state) => {
+    let didUpdate = false;
+    const nextState = { ...state };
+
+    for (const uri of targetUris) {
+      if (uri in nextState) {
+        delete nextState[uri];
+        didUpdate = true;
+      }
     }
 
     return didUpdate ? nextState : null;

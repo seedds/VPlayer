@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { getParentPath, listLibraryItems } from '../lib/videoLibrary';
@@ -17,29 +17,40 @@ export function FolderPickerModal({ movingItems, onCancel, onPick, visible }: Fo
   const [browsePath, setBrowsePath] = useState<string | null>(null);
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // Ignores results from a superseded load: tapping into a subfolder then up
+  // quickly could otherwise land the slower response last and show the wrong
+  // folder's contents under the right title.
+  const loadRequestIdRef = useRef(0);
 
-  // The single shared parent of the moving items, when they all share one, is a
-  // no-op destination. Mixed parents (possible only via multi-select across a
-  // future flat view) leave it null so nothing is wrongly disabled.
-  const sourceParentPath =
-    movingItems.length > 0 && movingItems.every((item) => item.parentPath === movingItems[0].parentPath)
-      ? movingItems[0].parentPath
-      : undefined;
+  // A move's items always share one parent (selection is within a single folder),
+  // which is a no-op destination.
+  const sourceParentPath = movingItems[0]?.parentPath ?? null;
 
   const movingFolderPaths = movingItems
     .filter((item): item is FolderItem => item.kind === 'folder')
     .map((item) => item.relativePath);
 
   const loadFolders = useCallback(async (path: string | null) => {
+    const requestId = loadRequestIdRef.current + 1;
+    loadRequestIdRef.current = requestId;
     setLoading(true);
 
     try {
       const items = await listLibraryItems(path);
+
+      if (loadRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setFolders(items.filter((item): item is FolderItem => item.kind === 'folder'));
     } catch {
-      setFolders([]);
+      if (loadRequestIdRef.current === requestId) {
+        setFolders([]);
+      }
     } finally {
-      setLoading(false);
+      if (loadRequestIdRef.current === requestId) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -60,9 +71,10 @@ export function FolderPickerModal({ movingItems, onCancel, onPick, visible }: Fo
     return movingFolderPaths.some((folderPath) => path === folderPath || path.startsWith(`${folderPath}/`));
   }
 
-  const currentIsSource = (browsePath ?? null) === (sourceParentPath ?? null);
+  const currentIsSource = (browsePath ?? null) === sourceParentPath;
   const currentIsInsideMovedSubtree = isInsideMovedSubtree(browsePath);
   const canMoveHere = !currentIsSource && !currentIsInsideMovedSubtree;
+  const browseFolderName = browsePath ? (browsePath.split('/').pop() ?? 'Library') : 'Library';
 
   function openFolder(folder: FolderItem) {
     setBrowsePath(folder.relativePath);
@@ -84,7 +96,7 @@ export function FolderPickerModal({ movingItems, onCancel, onPick, visible }: Fo
               <Text style={styles.headerButtonText}>Cancel</Text>
             </Pressable>
             <Text numberOfLines={1} style={styles.headerTitle}>
-              {browsePath ? (browsePath.split('/').pop() ?? 'Library') : 'Library'}
+              {browseFolderName}
             </Text>
             <Pressable
               disabled={!canMoveHere}
@@ -123,7 +135,7 @@ export function FolderPickerModal({ movingItems, onCancel, onPick, visible }: Fo
                 return (
                   <Pressable
                     disabled={disabled}
-                    key={folder.id}
+                    key={folder.uri}
                     onPress={() => openFolder(folder)}
                     style={({ pressed }) => [styles.row, disabled && styles.rowDisabled, pressed && styles.rowPressed]}
                   >
@@ -143,7 +155,7 @@ export function FolderPickerModal({ movingItems, onCancel, onPick, visible }: Fo
               ? 'Items are already in this folder.'
               : currentIsInsideMovedSubtree
                 ? 'A folder cannot be moved into itself.'
-                : `Move here into "${browsePath ? (browsePath.split('/').pop() ?? 'Library') : 'Library'}".`}
+                : `Move here into "${browseFolderName}".`}
           </Text>
         </View>
       </View>

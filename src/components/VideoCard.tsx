@@ -7,6 +7,13 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { formatDuration } from '../lib/format';
 import type { LibraryItem } from '../lib/types';
 
+const KIND_LABELS: Record<LibraryItem['kind'], { placeholder: string; meta: string }> = {
+  folder: { placeholder: 'Folder', meta: 'Folder' },
+  video: { placeholder: 'Video', meta: '' },
+  subtitle: { placeholder: 'SRT', meta: 'Subtitle file' },
+  file: { placeholder: 'File', meta: 'File cannot be played' },
+};
+
 type VideoCardProps = {
   durationSeconds?: number;
   isNew: boolean;
@@ -46,37 +53,15 @@ export function VideoCard({
       ? Math.max(0, Math.min(1, savedPositionSeconds / durationSeconds))
       : 0;
 
-  function getPlaceholderLabel(): string {
-    if (video.kind === 'folder') {
-      return 'Folder';
-    }
+  const placeholderLabel = KIND_LABELS[video.kind].placeholder;
+  const metaText =
+    video.kind === 'video'
+      ? `${formatDuration(savedPositionSeconds)} / ${formatDuration(durationSeconds)}`
+      : KIND_LABELS[video.kind].meta;
 
-    if (video.kind === 'subtitle') {
-      return 'SRT';
-    }
-
-    if (video.kind === 'file') {
-      return 'File';
-    }
-
-    return 'Video';
-  }
-
-  function getMetaText(): string {
-    if (video.kind === 'folder') {
-      return 'Folder';
-    }
-
-    if (video.kind === 'video') {
-      return `${formatDuration(savedPositionSeconds)} / ${formatDuration(durationSeconds)}`;
-    }
-
-    if (video.kind === 'subtitle') {
-      return 'Subtitle file';
-    }
-
-    return 'File cannot be played';
-  }
+  const badge = isVideo ? (
+    isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />
+  ) : null;
 
   function renderCardContent() {
     return (
@@ -91,7 +76,7 @@ export function VideoCard({
               </View>
             ) : (
               <View style={styles.thumbnailPlaceholder}>
-                <Text style={styles.thumbnailPlaceholderText}>{getPlaceholderLabel()}</Text>
+                <Text style={styles.thumbnailPlaceholderText}>{placeholderLabel}</Text>
               </View>
             )}
           </View>
@@ -101,16 +86,14 @@ export function VideoCard({
               {video.name}
             </Text>
             <Text numberOfLines={1} style={styles.meta}>
-              {getMetaText()}
+              {metaText}
             </Text>
           </View>
         </View>
 
         {selectionMode ? (
           <View style={styles.rowActions}>
-            <View style={styles.badgeSlot}>
-              {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
-            </View>
+            <View style={styles.badgeSlot}>{badge}</View>
             <View style={styles.actionSlot}>
               <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
                 <Text style={[styles.selectionIndicatorText, selected && styles.selectionIndicatorTextActive]}>{selected ? '✓' : ''}</Text>
@@ -118,9 +101,7 @@ export function VideoCard({
             </View>
           </View>
         ) : (
-          <View style={styles.badgeSlot}>
-            {isVideo ? (isNew ? <Text style={styles.newLabel}>[new]</Text> : <PlaybackProgressBadge progress={playbackProgress} />) : null}
-          </View>
+          <View style={styles.badgeSlot}>{badge}</View>
         )}
       </Pressable>
     );

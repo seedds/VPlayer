@@ -809,10 +809,17 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
           }, requestTimeoutMs);
         });
 
-        const response = await Promise.race([fetchPromise, timedPromise]);
+        let response;
 
-        if (timeoutId !== null) {
-          window.clearTimeout(timeoutId);
+        try {
+          // finally, not just the success path: if fetch rejects (Wi-Fi drop) the
+          // timer would otherwise still fire, rejecting a promise nobody awaits and
+          // tripping the global unhandledrejection handler.
+          response = await Promise.race([fetchPromise, timedPromise]);
+        } finally {
+          if (timeoutId !== null) {
+            window.clearTimeout(timeoutId);
+          }
         }
 
         const text = await response.text();
@@ -870,10 +877,6 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
         }
 
         return formatBytes(item.size);
-      }
-
-      function getEntryType(item) {
-        return item.kind === 'folder' ? 'folder' : 'file';
       }
 
       function getVisibleLibraryItems() {
@@ -952,7 +955,6 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
         try {
           const response = await postJson('/library/rename', {
             relativePath: item.relativePath,
-            entryType: getEntryType(item),
             currentPath,
             name,
           });
@@ -1105,7 +1107,6 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
           fileName: fileSpec.file.name,
           relativePath: fileSpec.relativePath,
           totalSize: fileSpec.file.size,
-          mimeType: fileSpec.file.type,
         });
 
         const uploadId = init.uploadId;
@@ -1376,15 +1377,18 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
             destinationPath,
             items: selectedItems.map((item) => ({
               relativePath: item.relativePath,
-              entryType: getEntryType(item),
             })),
           });
           selectedLibraryPaths = new Set();
           applyLibraryListing(response);
-          setLibraryFeedback(
-            'Moved ' + response.movedCount + ' item' + (response.movedCount === 1 ? '' : 's') + '.',
-            null,
-          );
+          const moveFailures = response.failures || [];
+          const movedMessage = 'Moved ' + response.movedCount + ' item' + (response.movedCount === 1 ? '' : 's') + '.';
+
+          if (moveFailures.length) {
+            setLibraryFeedback(movedMessage + ' ' + moveFailures.length + ' failed: ' + moveFailures.join(' '), 'error');
+          } else {
+            setLibraryFeedback(movedMessage, null);
+          }
         } catch (error) {
           reportLibraryError(error, 'Move failed.', false);
         } finally {
@@ -1417,7 +1421,6 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
           for (const item of selectedItems) {
             latestResponse = await postJson('/library/delete', {
               relativePath: item.relativePath,
-              entryType: item.kind === 'folder' ? 'folder' : 'file',
               currentPath,
             });
           }

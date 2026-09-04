@@ -6,9 +6,9 @@ import type { VideoPlayer, VideoThumbnail } from 'expo-video';
 import type { VideoItem } from './types';
 import { getDocumentRoot } from './videoLibrary';
 
-export const THUMBNAIL_TIME_SECONDS = 10;
-export const THUMBNAIL_MAX_WIDTH = 240;
-export const THUMBNAIL_MAX_HEIGHT = 240;
+const THUMBNAIL_TIME_SECONDS = 10;
+const THUMBNAIL_MAX_WIDTH = 240;
+const THUMBNAIL_MAX_HEIGHT = 240;
 
 function getThumbnailCandidateTimes(durationSeconds?: number): number[] {
   const preferredTime =
@@ -23,10 +23,6 @@ export function getThumbnailDirectory(): string {
   return `${getDocumentRoot()}thumbnails/`;
 }
 
-export async function ensureThumbnailDirectory(): Promise<void> {
-  await FileSystem.makeDirectoryAsync(getThumbnailDirectory(), { intermediates: true });
-}
-
 function hashString(input: string): string {
   let hash = 5381;
 
@@ -37,7 +33,7 @@ function hashString(input: string): string {
   return (hash >>> 0).toString(36);
 }
 
-export function getThumbnailTargetUri(video: VideoItem): string {
+function getThumbnailTargetUri(video: VideoItem): string {
   const cacheKey = hashString(
     [
       video.uri,
@@ -53,17 +49,13 @@ export function getThumbnailTargetUri(video: VideoItem): string {
 }
 
 export async function getCachedThumbnailUri(video: VideoItem): Promise<string | null> {
-  await ensureThumbnailDirectory();
-
   const targetUri = getThumbnailTargetUri(video);
   const info = await FileSystem.getInfoAsync(targetUri);
 
   return info.exists ? targetUri : null;
 }
 
-export async function persistThumbnail(video: VideoItem, thumbnail: VideoThumbnail): Promise<string> {
-  await ensureThumbnailDirectory();
-
+async function persistThumbnail(video: VideoItem, thumbnail: VideoThumbnail): Promise<string> {
   const renderedImage = await ImageManipulator.manipulate(thumbnail).renderAsync();
   const savedImage = await renderedImage.saveAsync({
     compress: 0.9,
@@ -115,8 +107,6 @@ export async function generateThumbnailWithPlayer(
 // includes the URI, so the target file name differs; on any failure the caller
 // should fall back to clearing (the thumbnail will simply be regenerated).
 export async function moveThumbnail(oldVideo: VideoItem, newVideo: VideoItem): Promise<boolean> {
-  await ensureThumbnailDirectory();
-
   const fromUri = getThumbnailTargetUri(oldVideo);
   const toUri = getThumbnailTargetUri(newVideo);
 
@@ -140,13 +130,10 @@ export async function moveThumbnail(oldVideo: VideoItem, newVideo: VideoItem): P
 }
 
 export async function deleteThumbnailForVideo(video: VideoItem): Promise<void> {
-  await ensureThumbnailDirectory();
   await FileSystem.deleteAsync(getThumbnailTargetUri(video), { idempotent: true }).catch(() => undefined);
 }
 
 export async function pruneThumbnailCache(videos: VideoItem[]): Promise<void> {
-  await ensureThumbnailDirectory();
-
   const validPaths = new Set(videos.map((video) => getThumbnailTargetUri(video)));
   const entries = await FileSystem.readDirectoryAsync(getThumbnailDirectory());
 

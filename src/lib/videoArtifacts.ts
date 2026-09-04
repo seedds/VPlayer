@@ -1,8 +1,20 @@
-import { movePlaybackState } from './playbackState';
+import { movePlaybackState, removePlaybackEntries } from './playbackState';
 import type { VideoItem } from './types';
 import { deleteThumbnailForVideo, moveThumbnail } from './videoThumbnails';
 
-export type ArtifactMove = { oldUri: string; newUri: string };
+type ArtifactMove = { oldUri: string; newUri: string };
+
+// Deletes every on-disk artifact (playback progress entry, cached thumbnail) for
+// a set of videos that are themselves being deleted. Shared by the in-app delete
+// paths and the browser server so the cleanup cannot drift between them.
+export async function forgetVideoArtifacts(videos: VideoItem[]): Promise<void> {
+  if (videos.length === 0) {
+    return;
+  }
+
+  await removePlaybackEntries(videos.map((video) => video.uri));
+  await Promise.all(videos.map((video) => deleteThumbnailForVideo(video).catch(() => undefined)));
+}
 
 // Maps a video's old URI onto its new one after its containing item was renamed
 // or moved. For a single video oldRootUri === the video's URI (so the suffix is

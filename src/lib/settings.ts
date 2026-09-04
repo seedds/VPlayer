@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
+import { createJsonFileStore } from './jsonStore';
 import { getDocumentRoot } from './videoLibrary';
 
 export type Settings = {
@@ -10,20 +11,59 @@ export type Settings = {
 
 export type SettingKey = keyof Settings;
 
-type SettingLimit = {
-  min: number;
-  max: number;
+type SettingMeta = {
   default: number;
   options: readonly number[];
+  // Header title of the picker screen.
+  navTitle: string;
+  // Panel/section title shown next to this setting.
+  title: string;
+  subtitle: string;
+  // Label on the row that opens the picker.
+  rowLabel: string;
+  // Optional note shown under the row.
+  footnote?: string;
+  // Formats a stored value for display (e.g. tenths -> "3.0x").
+  formatLabel?: (value: number) => string;
 };
 
-// One source of truth for every numeric setting: its bounds, default, and the
-// choices shown in the picker screens. `longPressSpeedTenths` is stored in
-// tenths (30 == 3.0x) so the persisted value stays a whole number.
-export const SETTING_LIMITS: { readonly [K in SettingKey]: SettingLimit } = {
-  maxParallelUploads: { min: 1, max: 5, default: 3, options: [1, 2, 3, 4, 5] },
-  subtitleFontSize: { min: 24, max: 48, default: 36, options: [24, 28, 32, 36, 40, 44, 48] },
-  longPressSpeedTenths: { min: 10, max: 30, default: 30, options: [10, 15, 20, 25, 30] },
+// One source of truth for every numeric setting: its choices, default, and all
+// the copy the picker/settings screens render. `longPressSpeedTenths` is stored
+// in tenths (30 == 3.0x) so the persisted value stays a whole number. `min`/`max`
+// are the first/last option, so a setting's bounds cannot drift from its choices.
+export const SETTING_META: { readonly [K in SettingKey]: SettingMeta } = {
+  maxParallelUploads: {
+    default: 3,
+    options: [1, 2, 3, 4, 5],
+    navTitle: 'Concurrent Uploads',
+    title: 'Concurrent uploads',
+    subtitle: 'Choose how many files the browser uploader can send in parallel.',
+    rowLabel: 'Select upload count',
+    footnote: 'Refresh the browser upload page to apply changes.',
+  },
+  subtitleFontSize: {
+    default: 36,
+    options: [24, 28, 32, 36, 40, 44, 48],
+    navTitle: 'Subtitle Size',
+    title: 'Subtitle size',
+    subtitle: 'Choose how large subtitles appear during playback.',
+    rowLabel: 'Select subtitle size',
+  },
+  longPressSpeedTenths: {
+    default: 30,
+    options: [10, 15, 20, 25, 30],
+    navTitle: 'Hold-to-Speed-Up',
+    title: 'Hold-to-speed-up rate',
+    subtitle: 'Press and hold the video to temporarily play at this speed.',
+    rowLabel: 'Select speed',
+    formatLabel: (value) => `${(value / 10).toFixed(1)}\u00d7`,
+  },
+};
+
+export const DEFAULT_SETTINGS: Settings = {
+  maxParallelUploads: SETTING_META.maxParallelUploads.default,
+  subtitleFontSize: SETTING_META.subtitleFontSize.default,
+  longPressSpeedTenths: SETTING_META.longPressSpeedTenths.default,
 };
 
 // The legacy per-setting files, migrated once into app-settings.json. Each maps
@@ -34,29 +74,16 @@ const LEGACY_SETTINGS_FILES: ReadonlyArray<{ fileName: string; key: SettingKey; 
   { fileName: 'playback-settings.json', key: 'longPressSpeedTenths', field: 'longPressSpeedTenths' },
 ];
 
-let settingsCache: Settings | null = null;
-let settingsMutationQueue: Promise<void> = Promise.resolve();
-
-function getSettingsFileUri(): string {
-  return `${getDocumentRoot()}app-settings.json`;
-}
-
 export function clampSetting(key: SettingKey, input: unknown): number {
-  const limit = SETTING_LIMITS[key];
+  const { options, default: defaultValue } = SETTING_META[key];
+  const min = options[0];
+  const max = options[options.length - 1];
 
   if (typeof input !== 'number' || !Number.isFinite(input)) {
-    return limit.default;
+    return defaultValue;
   }
 
-  return Math.min(limit.max, Math.max(limit.min, Math.round(input)));
-}
-
-function createDefaultSettings(): Settings {
-  return {
-    maxParallelUploads: SETTING_LIMITS.maxParallelUploads.default,
-    subtitleFontSize: SETTING_LIMITS.subtitleFontSize.default,
-    longPressSpeedTenths: SETTING_LIMITS.longPressSpeedTenths.default,
-  };
+  return Math.min(max, Math.max(min, Math.round(input)));
 }
 
 function clampAll(partial: Partial<Record<SettingKey, unknown>>): Settings {
@@ -99,54 +126,26 @@ async function deleteLegacySettings(): Promise<void> {
   );
 }
 
-async function loadSettings(): Promise<Settings> {
-  if (settingsCache) {
-    return settingsCache;
-  }
-
-  const fileUri = getSettingsFileUri();
-  const info = await FileSystem.getInfoAsync(fileUri);
-
-  if (!info.exists) {
+const store = createJsonFileStore<Settings>('app-settings.json', async ({ exists, parsed }) => {
+  if (!exists) {
     // First launch on this build: adopt any values from the three legacy files,
     // write the unified file, then remove the old ones.
     const legacy = await readLegacySettings();
-    settingsCache = clampAll(legacy);
-    await writeSettings(settingsCache);
+    const value = clampAll(legacy);
     await deleteLegacySettings();
-    return settingsCache;
+    return { value, persist: true };
   }
 
-  try {
-    const parsed = JSON.parse(await FileSystem.readAsStringAsync(fileUri)) as Partial<Record<SettingKey, unknown>>;
-    settingsCache = clampAll(parsed);
-  } catch {
-    settingsCache = createDefaultSettings();
-  }
-
-  return settingsCache;
-}
-
-async function writeSettings(nextSettings: Settings): Promise<void> {
-  settingsCache = nextSettings;
-  await FileSystem.writeAsStringAsync(getSettingsFileUri(), JSON.stringify(nextSettings));
-}
+  return {
+    value: clampAll((parsed as Partial<Record<SettingKey, unknown>>) ?? {}),
+    persist: false,
+  };
+});
 
 export async function getSettings(): Promise<Settings> {
-  return loadSettings();
+  return store.read();
 }
 
 export async function updateSettings(partial: Partial<Settings>): Promise<Settings> {
-  let resolvedSettings = createDefaultSettings();
-
-  settingsMutationQueue = settingsMutationQueue
-    .catch(() => undefined)
-    .then(async () => {
-      const current = await loadSettings();
-      resolvedSettings = clampAll({ ...current, ...partial });
-      await writeSettings(resolvedSettings);
-    });
-
-  await settingsMutationQueue;
-  return resolvedSettings;
+  return store.update((current) => clampAll({ ...current, ...partial }));
 }

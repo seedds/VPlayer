@@ -3,8 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { ConfigServer, type HttpRequest, type HttpResponse, type ServerConfig } from 'react-native-nitro-http-server';
 
 import type { ActiveUploadRow, LibraryItem, UploadActivity, UploadStatus } from '../lib/types';
-import { clampSetting, SETTING_LIMITS } from '../lib/settings';
-import { clearPlaybackProgressForUris } from '../lib/playbackState';
+import { clampSetting, SETTING_META } from '../lib/settings';
 import {
   clearTempUploads,
   collectVideos,
@@ -18,8 +17,7 @@ import {
   normalizeLibraryDirectoryPath,
   renameLibraryItem,
 } from '../lib/videoLibrary';
-import { deleteThumbnailForVideo } from '../lib/videoThumbnails';
-import { relinkVideoArtifacts } from '../lib/videoArtifacts';
+import { forgetVideoArtifacts, relinkVideoArtifacts } from '../lib/videoArtifacts';
 import { buildUploadPage } from './uploadPage';
 
 export const DEFAULT_SERVER_PORT = 8081;
@@ -33,10 +31,15 @@ type UploadSession = {
   totalSize: number;
   receivedBytes: number;
   expectedChunkIndex: number;
+  lastActivityAt: number;
 };
 
+// A session with no chunk/complete activity for this long is swept: a browser tab
+// killed mid-upload otherwise keeps a 'receiving' session (and the app's
+// keep-awake and "Uploading" banner) alive until the server restarts.
+const UPLOAD_SESSION_TTL_MS = 5 * 60 * 1000;
+
 type StartServerOptions = {
-  maxParallelUploads: number;
   port: number;
   onActivity?: (activity: UploadActivity) => void;
   onLibraryChanged?: () => Promise<void> | void;
@@ -191,7 +194,7 @@ class LocalUploadServer {
 
   private server: ConfigServer | null = null;
 
-  private maxParallelUploads = SETTING_LIMITS.maxParallelUploads.default;
+  private maxParallelUploads = SETTING_META.maxParallelUploads.default;
 
   private uploads = new Map<string, UploadSession>();
 
@@ -207,9 +210,7 @@ class LocalUploadServer {
     this.maxParallelUploads = clampSetting('maxParallelUploads', maxParallelUploads);
   }
 
-  async start({ port, onActivity, onLibraryChanged, maxParallelUploads }: StartServerOptions): Promise<void> {
-    this.maxParallelUploads = clampSetting('maxParallelUploads', maxParallelUploads);
-
+  async start({ port, onActivity, onLibraryChanged }: StartServerOptions): Promise<void> {
     if (this.server && this.port === port) {
       this.onActivity = onActivity;
       this.onLibraryChanged = onLibraryChanged;
@@ -315,8 +316,30 @@ class LocalUploadServer {
     this.emit(this.buildActivity(statusWhenIdle, messageWhenIdle));
   }
 
+  // Drops sessions with no activity for UPLOAD_SESSION_TTL_MS and deletes their
+  // temp files. Runs on every request, so no timer is needed.
+  private sweepStaleSessions(): void {
+    const now = Date.now();
+    const staleSessions = Array.from(this.uploads.values()).filter(
+      (session) => now - session.lastActivityAt > UPLOAD_SESSION_TTL_MS,
+    );
+
+    if (staleSessions.length === 0) {
+      return;
+    }
+
+    for (const session of staleSessions) {
+      this.uploads.delete(session.uploadId);
+      void FileSystem.deleteAsync(session.tempUri, { idempotent: true }).catch(() => undefined);
+    }
+
+    this.emitActivity('idle', 'Cleaned up an inactive upload.');
+  }
+
   private async handleRequest(request: HttpRequest): Promise<HttpResponse> {
     try {
+      this.sweepStaleSessions();
+
       const requestUrl = parseRequestUrl(request.path);
       const pathname = requestUrl.pathname;
 
@@ -327,14 +350,6 @@ class LocalUploadServer {
             maxParallelUploads: this.maxParallelUploads,
           }),
         );
-      }
-
-      if (request.method === 'GET' && pathname === '/health') {
-        return jsonResponse({
-          ok: true,
-          port: this.port,
-          activeUploads: this.uploads.size,
-        });
       }
 
       if (request.method === 'POST' && pathname === '/upload/init') {
@@ -401,13 +416,13 @@ class LocalUploadServer {
         totalSize,
         receivedBytes: 0,
         expectedChunkIndex: 0,
+        lastActivityAt: Date.now(),
       });
 
       this.emitActivity('receiving', `Preparing ${target.fileName}`);
 
       return jsonResponse({
         uploadId,
-        fileName: target.fileName,
         relativePath: target.relativePath,
         chunkSize: CHUNK_SIZE,
       });
@@ -438,7 +453,6 @@ class LocalUploadServer {
 
       return jsonResponse({
         ok: true,
-        folder: serializeLibraryItem(folder),
         ...(await serializeLibraryListing(parentPath || null)),
       });
     } catch (error) {
@@ -450,22 +464,15 @@ class LocalUploadServer {
     try {
       const body = parseJsonBody(request.body);
       const relativePath = readString(body.relativePath, 'relativePath');
-      const entryType = this.readEntryType(body.entryType);
       const currentPath = normalizeLibraryDirectoryPath(readOptionalString(body.currentPath));
 
-      const target = await getLibraryItem(relativePath, entryType);
+      const target = await getLibraryItem(relativePath);
 
       if (!target) {
         throw new Error('Library item not found.');
       }
 
-      const videosToCleanup = await collectVideos(target);
-
-      if (videosToCleanup.length > 0) {
-        await clearPlaybackProgressForUris(videosToCleanup.map((video) => video.uri));
-        await Promise.all(videosToCleanup.map((video) => deleteThumbnailForVideo(video).catch(() => undefined)));
-      }
-
+      await forgetVideoArtifacts(await collectVideos(target));
       await deleteLibraryItem(target.uri);
       this.emitActivity('idle', `Deleted ${target.name}`);
       await this.onLibraryChanged?.();
@@ -479,31 +486,20 @@ class LocalUploadServer {
     }
   }
 
-  private readEntryType(input: unknown): 'file' | 'folder' {
-    const entryType = readString(input, 'entryType');
-
-    if (entryType !== 'file' && entryType !== 'folder') {
-      throw new Error('Invalid entryType.');
-    }
-
-    return entryType;
-  }
-
   private async handleRename(request: HttpRequest): Promise<HttpResponse> {
     try {
       const body = parseJsonBody(request.body);
       const relativePath = readString(body.relativePath, 'relativePath');
-      const entryType = this.readEntryType(body.entryType);
       const currentPath = normalizeLibraryDirectoryPath(readOptionalString(body.currentPath));
       const name = readString(body.name, 'name');
-      const target = await getLibraryItem(relativePath, entryType);
+      const target = await getLibraryItem(relativePath);
 
       if (!target) {
         throw new Error('Library item not found.');
       }
 
       const videosToRelink = await collectVideos(target);
-      const renamed = await renameLibraryItem(target.relativePath, entryType, name);
+      const renamed = await renameLibraryItem(target.relativePath, name);
 
       if (renamed.uri !== target.uri) {
         await relinkVideoArtifacts(videosToRelink, target.uri, renamed.uri);
@@ -534,27 +530,34 @@ class LocalUploadServer {
       }
 
       let movedCount = 0;
+      const failures: string[] = [];
 
+      // Move what we can and report the rest, matching the in-app move: one
+      // collision must not abandon the remaining items with no listing returned.
       for (const rawItem of rawItems) {
         if (!rawItem || typeof rawItem !== 'object') {
-          throw new Error('Invalid item to move.');
+          failures.push('Invalid item to move.');
+          continue;
         }
 
-        const itemBody = rawItem as Record<string, unknown>;
-        const relativePath = readString(itemBody.relativePath, 'relativePath');
-        const entryType = this.readEntryType(itemBody.entryType);
-        const target = await getLibraryItem(relativePath, entryType);
+        try {
+          const itemBody = rawItem as Record<string, unknown>;
+          const relativePath = readString(itemBody.relativePath, 'relativePath');
+          const target = await getLibraryItem(relativePath);
 
-        if (!target) {
-          throw new Error('Library item not found.');
-        }
+          if (!target) {
+            throw new Error('Library item not found.');
+          }
 
-        const videosToRelink = await collectVideos(target);
-        const moved = await moveLibraryItem(target.relativePath, entryType, destinationPath || null);
+          const videosToRelink = await collectVideos(target);
+          const moved = await moveLibraryItem(target.relativePath, destinationPath || null);
 
-        if (moved.uri !== target.uri) {
-          await relinkVideoArtifacts(videosToRelink, target.uri, moved.uri);
-          movedCount += 1;
+          if (moved.uri !== target.uri) {
+            await relinkVideoArtifacts(videosToRelink, target.uri, moved.uri);
+            movedCount += 1;
+          }
+        } catch (itemError) {
+          failures.push(getErrorMessage(itemError));
         }
       }
 
@@ -564,6 +567,7 @@ class LocalUploadServer {
       return jsonResponse({
         ok: true,
         movedCount,
+        failures,
         ...(await serializeLibraryListing(currentPath || null)),
       });
     } catch (error) {
@@ -577,7 +581,15 @@ class LocalUploadServer {
     // exit path, not just success: a rejected chunk would otherwise leak the file.
     const uploadedChunkFile = (() => {
       try {
-        return new File(normalizeFileUri(readHeader(headers, 'x-uploaded-file-path')));
+        const headerPath = readHeader(headers, 'x-uploaded-file-path').replace(/^file:\/\//, '');
+
+        // The plugin writes chunks into its own temp dir. Reject any other path so
+        // a LAN client cannot name an arbitrary file for us to read/append/delete.
+        if (headerPath !== getUploadPluginTempDir() && !headerPath.startsWith(`${getUploadPluginTempDir()}/`)) {
+          return null;
+        }
+
+        return new File(normalizeFileUri(headerPath));
       } catch {
         return null;
       }
@@ -624,6 +636,7 @@ class LocalUploadServer {
       tempFile.write(chunkBytes, { append: session.receivedBytes > 0 });
       session.receivedBytes += chunkBytes.byteLength;
       session.expectedChunkIndex += 1;
+      session.lastActivityAt = Date.now();
 
       this.emitActivity('receiving', `Uploading ${session.fileName}`);
 
@@ -655,30 +668,39 @@ class LocalUploadServer {
         throw new Error('Upload session not found.');
       }
 
-      if (session.receivedBytes !== session.totalSize) {
-        throw new Error('Upload is incomplete.');
-      }
-
-      const existingTargetInfo = await FileSystem.getInfoAsync(session.finalUri);
-
-      if (existingTargetInfo.exists) {
-        if (existingTargetInfo.isDirectory) {
-          throw new Error('A folder with that name already exists.');
+      try {
+        if (session.receivedBytes !== session.totalSize) {
+          throw new Error('Upload is incomplete.');
         }
 
-        await FileSystem.deleteAsync(session.finalUri, { idempotent: true });
-      }
+        const existingTargetInfo = await FileSystem.getInfoAsync(session.finalUri);
 
-      await FileSystem.moveAsync({
-        from: session.tempUri,
-        to: session.finalUri,
-      });
+        if (existingTargetInfo.exists) {
+          if (existingTargetInfo.isDirectory) {
+            throw new Error('A folder with that name already exists.');
+          }
+
+          await FileSystem.deleteAsync(session.finalUri, { idempotent: true });
+        }
+
+        await FileSystem.moveAsync({
+          from: session.tempUri,
+          to: session.finalUri,
+        });
+      } catch (completionError) {
+        // A failed finalize otherwise leaves the session 'receiving' forever and
+        // its temp file on disk. Drop both, then surface the error.
+        this.uploads.delete(uploadId);
+        await FileSystem.deleteAsync(session.tempUri, { idempotent: true }).catch(() => undefined);
+        this.emitActivity('error', `Failed to save ${session.fileName}`);
+        throw completionError;
+      }
 
       this.uploads.delete(uploadId);
       this.emitActivity('complete', `Saved ${session.relativePath}`);
 
       await this.onLibraryChanged?.();
-      return jsonResponse({ ok: true, fileName: session.fileName });
+      return jsonResponse({ ok: true });
     } catch (error) {
       return jsonResponse({ message: getErrorMessage(error) }, 400);
     }

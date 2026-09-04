@@ -1,9 +1,10 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import type { FolderItem, LibraryItem, VideoItem } from './types';
+import { getThumbnailDirectory } from './videoThumbnails';
 
-export const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm', '.mkv'];
-export const ALLOWED_SUBTITLE_EXTENSIONS = ['.srt'];
+const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm', '.mkv'];
+const ALLOWED_SUBTITLE_EXTENSIONS = ['.srt'];
 
 export function getDocumentRoot(): string {
   if (!FileSystem.documentDirectory) {
@@ -29,11 +30,11 @@ export function getParentPath(path: string | null): string | null {
   return segments.slice(0, -1).join('/');
 }
 
-export function getVideoDirectory(): string {
+function getVideoDirectory(): string {
   return `${getDocumentRoot()}videos/`;
 }
 
-export function getTempUploadDirectory(): string {
+function getTempUploadDirectory(): string {
   return `${getDocumentRoot()}uploads-tmp/`;
 }
 
@@ -42,22 +43,22 @@ export function getFileExtension(fileName: string): string {
   return parts?.[0] ?? '';
 }
 
-export function getFileBaseName(fileName: string): string {
+function getFileBaseName(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '');
 }
 
-export function isAllowedVideoFileName(fileName: string): boolean {
+function isAllowedVideoFileName(fileName: string): boolean {
   return ALLOWED_VIDEO_EXTENSIONS.includes(getFileExtension(fileName));
 }
 
-export function isAllowedSubtitleFileName(fileName: string): boolean {
+function isAllowedSubtitleFileName(fileName: string): boolean {
   return ALLOWED_SUBTITLE_EXTENSIONS.includes(getFileExtension(fileName));
 }
 
 // A rename must not strip the extension a video or subtitle needs: sanitizeFileName
 // preserves whatever it is given, so `ep1.mp4` -> `ep1` would silently produce a
 // non-playable `file`. Changing between two allowed video extensions is fine.
-export function renamePreservesKind(originalName: string, nextName: string): boolean {
+function renamePreservesKind(originalName: string, nextName: string): boolean {
   const wasVideo = isAllowedVideoFileName(originalName);
   const wasSubtitle = isAllowedSubtitleFileName(originalName);
 
@@ -72,7 +73,7 @@ export function renamePreservesKind(originalName: string, nextName: string): boo
   return true;
 }
 
-export function sanitizeFolderName(input: string): string {
+function sanitizeFolderName(input: string): string {
   const cleaned = input.normalize('NFC').replace(/[^\p{L}\p{M}\p{N}._ -]/gu, '_').replace(/\s+/g, ' ').trim();
   const normalized = cleaned.replace(/^\.+$/g, '').replace(/\.+$/g, '').trim();
 
@@ -93,16 +94,6 @@ function joinRelativePath(parentPath: string | null, name: string): string {
 function getRelativeName(relativePath: string): string {
   const segments = splitRelativePath(relativePath);
   return segments[segments.length - 1] ?? '';
-}
-
-function getRelativeParentPath(relativePath: string): string | null {
-  const segments = splitRelativePath(relativePath);
-
-  if (segments.length <= 1) {
-    return null;
-  }
-
-  return segments.slice(0, -1).join('/');
 }
 
 function getDirectoryUri(relativePath?: string | null): string {
@@ -135,12 +126,11 @@ async function buildLibraryItem(relativePath: string): Promise<LibraryItem | nul
   }
 
   const name = getRelativeName(relativePath);
-  const parentPath = getRelativeParentPath(relativePath);
+  const parentPath = getParentPath(relativePath);
   const modified = info.modificationTime ? info.modificationTime * 1000 : Date.now();
 
   if (info.isDirectory) {
     return {
-      id: uri,
       kind: 'folder',
       name,
       uri,
@@ -151,7 +141,6 @@ async function buildLibraryItem(relativePath: string): Promise<LibraryItem | nul
   }
 
   return {
-    id: uri,
     kind: isAllowedSubtitleFileName(name) ? 'subtitle' : isAllowedVideoFileName(name) ? 'video' : 'file',
     name,
     uri,
@@ -169,7 +158,7 @@ export function normalizeLibraryDirectoryPath(input?: string | null): string {
     .join('/');
 }
 
-export function sanitizeFileName(input: string): string {
+function sanitizeFileName(input: string): string {
   const leafName = input.split(/[\\/]/).pop()?.trim() || 'upload';
   const cleaned = leafName.normalize('NFC').replace(/[^\p{L}\p{M}\p{N}._ -]/gu, '_').replace(/\s+/g, ' ');
   const extension = getFileExtension(cleaned);
@@ -179,7 +168,7 @@ export function sanitizeFileName(input: string): string {
   return `${baseName}${extension.toLowerCase()}`;
 }
 
-export function normalizeLibraryFilePath(input: string): string {
+function normalizeLibraryFilePath(input: string): string {
   const segments = splitRelativePath(input);
 
   if (segments.length === 0) {
@@ -192,9 +181,12 @@ export function normalizeLibraryFilePath(input: string): string {
   ].join('/');
 }
 
+// Creates every app-owned directory once. Called at bootstrap and server start,
+// so the per-call mkdirs the thumbnail/library helpers used to run are unnecessary.
 export async function ensureAppDirectories(): Promise<void> {
   await FileSystem.makeDirectoryAsync(getVideoDirectory(), { intermediates: true });
   await FileSystem.makeDirectoryAsync(getTempUploadDirectory(), { intermediates: true });
+  await FileSystem.makeDirectoryAsync(getThumbnailDirectory(), { intermediates: true });
 }
 
 export async function clearTempUploads(): Promise<void> {
@@ -219,7 +211,7 @@ export async function createUploadTarget(relativePath: string): Promise<{
   await ensureAppDirectories();
 
   const normalizedPath = normalizeLibraryFilePath(relativePath);
-  const parentPath = getRelativeParentPath(normalizedPath);
+  const parentPath = getParentPath(normalizedPath);
   const sanitizedName = getRelativeName(normalizedPath);
 
   if (parentPath) {
@@ -284,10 +276,6 @@ export async function listAllVideoItems(parentPath: string | null = null): Promi
   return videos.sort((left, right) => left.relativePath.localeCompare(right.relativePath, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
-export function getVideoItems(items: LibraryItem[]): VideoItem[] {
-  return items.filter((item): item is VideoItem => item.kind === 'video');
-}
-
 // Every video reachable under a library item: the item itself if it is a video,
 // or a recursive walk if it is a folder. Used to collect the videos whose
 // playback progress and thumbnails need re-keying or clearing after a mutation.
@@ -299,14 +287,28 @@ export async function collectVideos(item: LibraryItem): Promise<VideoItem[]> {
   return item.kind === 'video' ? [item] : [];
 }
 
-export async function getLibraryItem(relativePath: string, entryType: 'file' | 'folder'): Promise<LibraryItem | null> {
-  const normalizedPath = entryType === 'folder' ? normalizeLibraryDirectoryPath(relativePath) : normalizeLibraryFilePath(relativePath);
+// Validates a lookup path instead of rewriting it: an existing item's stored
+// relativePath already reflects on-disk names, so re-sanitizing it (the old
+// entryType-driven behavior) could point at the wrong file. Rejects traversal
+// (`.`/`..`) and empty segments; the kind is then read from disk.
+function toLookupPath(relativePath: string): string | null {
+  const segments = splitRelativePath(relativePath);
 
-  if (!normalizedPath) {
+  if (segments.length === 0 || segments.some((segment) => segment === '.' || segment === '..')) {
     return null;
   }
 
-  return buildLibraryItem(normalizedPath);
+  return segments.join('/');
+}
+
+export async function getLibraryItem(relativePath: string): Promise<LibraryItem | null> {
+  const lookupPath = toLookupPath(relativePath);
+
+  if (!lookupPath) {
+    return null;
+  }
+
+  return buildLibraryItem(lookupPath);
 }
 
 export async function createLibraryFolder(parentPath: string | null, name: string): Promise<FolderItem> {
@@ -332,22 +334,19 @@ export async function createLibraryFolder(parentPath: string | null, name: strin
   return folder;
 }
 
-export async function renameLibraryItem(
-  relativePath: string,
-  entryType: 'file' | 'folder',
-  newName: string,
-): Promise<LibraryItem> {
+export async function renameLibraryItem(relativePath: string, newName: string): Promise<LibraryItem> {
   await ensureAppDirectories();
 
-  const target = await getLibraryItem(relativePath, entryType);
+  const target = await getLibraryItem(relativePath);
 
   if (!target) {
     throw new Error('Library item not found.');
   }
 
-  const sanitizedName = entryType === 'folder' ? sanitizeFolderName(newName) : sanitizeFileName(newName);
+  const isFolder = target.kind === 'folder';
+  const sanitizedName = isFolder ? sanitizeFolderName(newName) : sanitizeFileName(newName);
 
-  if (entryType === 'file' && !renamePreservesKind(target.name, sanitizedName)) {
+  if (!isFolder && !renamePreservesKind(target.name, sanitizedName)) {
     const extension = getFileExtension(target.name);
     throw new Error(`Keep the ${extension} extension so the file stays playable.`);
   }
@@ -381,12 +380,11 @@ export async function renameLibraryItem(
 
 export async function moveLibraryItem(
   relativePath: string,
-  entryType: 'file' | 'folder',
   destinationParentPath: string | null,
 ): Promise<LibraryItem> {
   await ensureAppDirectories();
 
-  const target = await getLibraryItem(relativePath, entryType);
+  const target = await getLibraryItem(relativePath);
 
   if (!target) {
     throw new Error('Library item not found.');
