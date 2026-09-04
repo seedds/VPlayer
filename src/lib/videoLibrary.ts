@@ -5,12 +5,28 @@ import type { FolderItem, LibraryItem, VideoItem } from './types';
 export const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm', '.mkv'];
 export const ALLOWED_SUBTITLE_EXTENSIONS = ['.srt'];
 
-function getDocumentRoot(): string {
+export function getDocumentRoot(): string {
   if (!FileSystem.documentDirectory) {
     throw new Error('This device does not expose an app document directory.');
   }
 
   return FileSystem.documentDirectory;
+}
+
+// The parent of an absolute library URI (or relative path). Shared by the app UI
+// and the folder picker so there is one definition of "go up a level".
+export function getParentPath(path: string | null): string | null {
+  if (!path) {
+    return null;
+  }
+
+  const segments = path.split('/').filter(Boolean);
+
+  if (segments.length <= 1) {
+    return null;
+  }
+
+  return segments.slice(0, -1).join('/');
 }
 
 export function getVideoDirectory(): string {
@@ -221,9 +237,7 @@ export async function createUploadTarget(relativePath: string): Promise<{
   };
 }
 
-export async function listLibraryItems(parentPath: string | null = null): Promise<LibraryItem[]> {
-  await ensureAppDirectories();
-
+async function listLibraryItemsInDirectory(parentPath: string | null): Promise<LibraryItem[]> {
   const normalizedParent = normalizeLibraryDirectoryPath(parentPath);
   const directoryUri = getDirectoryUri(normalizedParent);
   const directoryInfo = await FileSystem.getInfoAsync(directoryUri);
@@ -240,13 +254,20 @@ export async function listLibraryItems(parentPath: string | null = null): Promis
   return items.filter((item): item is LibraryItem => item !== null).sort(compareLibraryItems);
 }
 
+export async function listLibraryItems(parentPath: string | null = null): Promise<LibraryItem[]> {
+  await ensureAppDirectories();
+  return listLibraryItemsInDirectory(parentPath);
+}
+
 export async function listAllVideoItems(parentPath: string | null = null): Promise<VideoItem[]> {
+  await ensureAppDirectories();
+
   const pendingPaths: Array<string | null> = [normalizeLibraryDirectoryPath(parentPath) || null];
   const videos: VideoItem[] = [];
 
   while (pendingPaths.length > 0) {
     const nextPath = pendingPaths.pop() ?? null;
-    const items = await listLibraryItems(nextPath);
+    const items = await listLibraryItemsInDirectory(nextPath);
 
     for (const item of items) {
       if (item.kind === 'folder') {
@@ -265,6 +286,17 @@ export async function listAllVideoItems(parentPath: string | null = null): Promi
 
 export function getVideoItems(items: LibraryItem[]): VideoItem[] {
   return items.filter((item): item is VideoItem => item.kind === 'video');
+}
+
+// Every video reachable under a library item: the item itself if it is a video,
+// or a recursive walk if it is a folder. Used to collect the videos whose
+// playback progress and thumbnails need re-keying or clearing after a mutation.
+export async function collectVideos(item: LibraryItem): Promise<VideoItem[]> {
+  if (item.kind === 'folder') {
+    return listAllVideoItems(item.relativePath);
+  }
+
+  return item.kind === 'video' ? [item] : [];
 }
 
 export async function getLibraryItem(relativePath: string, entryType: 'file' | 'folder'): Promise<LibraryItem | null> {

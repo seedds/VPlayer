@@ -2,9 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { NavigationContainer, DefaultTheme, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { createVideoPlayer } from 'expo-video';
 import { StatusBar } from 'expo-status-bar';
-import type { ImageProps } from 'expo-image';
 import { useKeepAwake } from 'expo-keep-awake';
 import * as Network from 'expo-network';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -31,45 +29,31 @@ import { VideoCard } from './src/components/VideoCard';
 import { isAndroidTabletLayout } from './src/lib/device';
 import { formatBytes, formatDate, getUploadProgress, normalizePort } from './src/lib/format';
 import {
-  clampMaxParallelUploads,
-  DEFAULT_MAX_PARALLEL_UPLOADS,
-  getUploadSettings,
-  saveUploadSettings,
-} from './src/lib/uploadSettings';
-import {
-  clampSubtitleFontSize,
-  DEFAULT_SUBTITLE_FONT_SIZE,
-  getSubtitleSettings,
-  saveSubtitleSettings,
-  SUBTITLE_FONT_SIZE_OPTIONS,
-} from './src/lib/subtitleSettings';
-import {
-  clampLongPressSpeedTenths,
-  DEFAULT_LONG_PRESS_SPEED_TENTHS,
-  getPlaybackSettings,
-  LONG_PRESS_SPEED_TENTHS_OPTIONS,
-  savePlaybackSettings,
-} from './src/lib/playbackSettings';
+  clampSetting,
+  getSettings,
+  SETTING_LIMITS,
+  type SettingKey,
+  type Settings,
+  updateSettings,
+} from './src/lib/settings';
 import {
   clearAllPlaybackProgress,
   clearPlaybackProgressForUris,
   getAllPlaybackState,
-  savePlaybackDuration,
   type PlaybackStateMap,
 } from './src/lib/playbackState';
-import {
-  deleteThumbnailForVideo,
-  generateThumbnailForVideo,
-  getCachedThumbnailUri,
-  pruneThumbnailCache,
-} from './src/lib/videoThumbnails';
+import { forgetProbedUris, hydrateVideos } from './src/lib/mediaHydration';
+import { relinkVideoArtifacts } from './src/lib/videoArtifacts';
+import { deleteThumbnailForVideo, pruneThumbnailCache } from './src/lib/videoThumbnails';
 import type { LibraryItem, UploadActivity, VideoItem } from './src/lib/types';
 import {
+  collectVideos,
   createLibraryFolder,
   deleteLibraryItem,
   ensureAppDirectories,
   getFileExtension,
   getLibraryItem,
+  getParentPath,
   getVideoItems,
   listAllVideoItems,
   listLibraryItems,
@@ -79,11 +63,6 @@ import {
 import { DEFAULT_SERVER_PORT, localUploadServer } from './src/server/localUploadServer';
 
 type ButtonTone = 'primary' | 'danger';
-type ThumbnailSource = ImageProps['source'];
-type ThumbnailHydrationJob = {
-  cancel: () => void;
-  promise: Promise<void>;
-};
 
 type RootStackParamList = {
   MainTabs: undefined;
@@ -99,13 +78,6 @@ type MainTabParamList = {
   Upload: undefined;
 };
 
-const INITIAL_ACTIVITY: UploadActivity = {
-  status: 'idle',
-  message: 'Starting local server...',
-  activeUploads: [],
-  updatedAt: Date.now(),
-};
-
 function createUploadActivity(status: UploadActivity['status'], message: string): UploadActivity {
   return {
     status,
@@ -115,9 +87,9 @@ function createUploadActivity(status: UploadActivity['status'], message: string)
   };
 }
 
+const INITIAL_ACTIVITY = createUploadActivity('idle', 'Starting local server...');
+
 const THUMBNAIL_HYDRATION_CONCURRENCY = 3;
-const THUMBNAIL_HYDRATION_MAX_ATTEMPTS = 3;
-const UPLOAD_CONCURRENCY_OPTIONS = [1, 2, 3, 4, 5] as const;
 
 // Full name with the base selected (extension preserved but not highlighted),
 // matching the Flutter rename prompt so the part that must be kept is visible.
@@ -141,25 +113,11 @@ const navigationTheme = {
   },
 };
 
-function getParentPath(path: string | null): string | null {
-  if (!path) {
-    return null;
-  }
-
-  const segments = path.split('/').filter(Boolean);
-
-  if (segments.length <= 1) {
-    return null;
-  }
-
-  return segments.slice(0, -1).join('/');
-}
-
 export default function App() {
   const { width, height } = useWindowDimensions();
   const [videos, setVideos] = useState<LibraryItem[]>([]);
   const [playbackStateByUri, setPlaybackStateByUri] = useState<PlaybackStateMap>({});
-  const [thumbnailSourceByUri, setThumbnailSourceByUri] = useState<Record<string, ThumbnailSource | null | undefined>>({});
+  const [thumbnailUriByVideo, setThumbnailUriByVideo] = useState<Record<string, string>>({});
   const [selectedVideoUri, setSelectedVideoUri] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedVideoUris, setSelectedVideoUris] = useState<Set<string>>(() => new Set());
@@ -168,21 +126,24 @@ export default function App() {
   const [ipAddress, setIpAddress] = useState<string | null>(null);
   const [serverRunning, setServerRunning] = useState(false);
   const [activePort, setActivePort] = useState<number | null>(null);
-  const [libraryRevision, setLibraryRevision] = useState(0);
+  // Bumped only when the upload server reports a library change, to trigger a
+  // full-library thumbnail pass. Plain UI refreshes (tab focus, foreground) do
+  // not bump it, so they never restat every thumbnail in the library.
+  const [serverLibraryRevision, setServerLibraryRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [portInput, setPortInput] = useState(String(DEFAULT_SERVER_PORT));
-  const [maxParallelUploads, setMaxParallelUploads] = useState(DEFAULT_MAX_PARALLEL_UPLOADS);
-  const [subtitleFontSize, setSubtitleFontSize] = useState(DEFAULT_SUBTITLE_FONT_SIZE);
-  const [longPressSpeedTenths, setLongPressSpeedTenths] = useState(DEFAULT_LONG_PRESS_SPEED_TENTHS);
+  const [settings, setSettings] = useState<Settings>(() => ({
+    maxParallelUploads: SETTING_LIMITS.maxParallelUploads.default,
+    subtitleFontSize: SETTING_LIMITS.subtitleFontSize.default,
+    longPressSpeedTenths: SETTING_LIMITS.longPressSpeedTenths.default,
+  }));
+  const { maxParallelUploads, subtitleFontSize, longPressSpeedTenths } = settings;
   // In-app library-management dialogs (Android has no Alert.prompt).
   const [newFolderVisible, setNewFolderVisible] = useState(false);
   const [renameTarget, setRenameTarget] = useState<LibraryItem | null>(null);
   const [moveVisible, setMoveVisible] = useState(false);
-  const playbackStateByUriRef = useRef<PlaybackStateMap>({});
-  const thumbnailSourceByUriRef = useRef<Record<string, ThumbnailSource | null | undefined>>({});
-  const thumbnailJobUrisRef = useRef<Set<string>>(new Set());
   const currentFolderPathRef = useRef<string | null>(null);
-  const maxParallelUploadsRef = useRef(DEFAULT_MAX_PARALLEL_UPLOADS);
+  const maxParallelUploadsRef = useRef(SETTING_LIMITS.maxParallelUploads.default);
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
 
   const isAndroidTablet = useMemo(() => isAndroidTabletLayout(width, height), [height, width]);
@@ -202,14 +163,6 @@ export default function App() {
   const selectedItems = useMemo(() => videos.filter((video) => selectedVideoUris.has(video.uri)), [selectedVideoUris, videos]);
   const allSelected = videos.length > 0 && selectedCount === videos.length;
   const shouldKeepAwakeForUpload = activity.activeUploads.length > 0;
-
-  useEffect(() => {
-    playbackStateByUriRef.current = playbackStateByUri;
-  }, [playbackStateByUri]);
-
-  useEffect(() => {
-    thumbnailSourceByUriRef.current = thumbnailSourceByUri;
-  }, [thumbnailSourceByUri]);
 
   useEffect(() => {
     currentFolderPathRef.current = currentFolderPath;
@@ -236,177 +189,45 @@ export default function App() {
       setCurrentFolderPath(targetPath);
       setVideos(items);
       setPlaybackStateByUri(playbackState);
-      setLibraryRevision((current) => current + 1);
     }
 
     await loadPath(path || null);
   }, []);
 
-  const hydrateMissingDurations = useCallback(async (items: VideoItem[], playbackState: PlaybackStateMap) => {
-    let didUpdate = false;
-
-    for (const item of items) {
-      const existingDuration = playbackState[item.uri]?.durationSeconds;
-
-      if (typeof existingDuration === 'number' && Number.isFinite(existingDuration) && existingDuration > 0) {
-        continue;
-      }
-
-      const player = createVideoPlayer(item.uri);
-      let subscription: { remove(): void } | null = null;
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-      const duration = await new Promise<number | null>((resolve) => {
-        let settled = false;
-
-        const finish = (value: number | null) => {
-          if (settled) {
-            return;
-          }
-
-          settled = true;
-          subscription?.remove();
-
-          if (timeoutId) {
-            clearTimeout(timeoutId);
-          }
-
-          player.release();
-          resolve(value);
-        };
-
-        subscription = player.addListener('sourceLoad', ({ duration: loadedDuration }) => {
-          finish(loadedDuration);
-        });
-
-        if (Number.isFinite(player.duration) && player.duration > 0) {
-          finish(player.duration);
-          return;
+  // Probes the current folder's videos (thumbnail + duration) as the user
+  // navigates. Cheap: mediaHydration skips URIs already probed this session, so
+  // re-entering a folder does no work.
+  const hydrateCurrentFolder = useCallback((items: VideoItem[]): (() => void) => {
+    const handle = hydrateVideos(items, { concurrency: THUMBNAIL_HYDRATION_CONCURRENCY }, {
+      onResult: (video, result) => {
+        if (result.thumbnailUri) {
+          setThumbnailUriByVideo((current) => ({ ...current, [video.uri]: result.thumbnailUri as string }));
         }
 
-        timeoutId = setTimeout(() => {
-          finish(Number.isFinite(player.duration) && player.duration > 0 ? player.duration : null);
-        }, 4000);
-      });
+        if (result.durationSeconds !== null) {
+          setPlaybackStateByUri((current) => {
+            const entry = current[video.uri];
+            const nextDuration = result.durationSeconds as number;
 
-      if (duration !== null && duration >= 0) {
-        await savePlaybackDuration(item.uri, duration);
-        didUpdate = true;
-      }
-    }
+            if (entry?.durationSeconds === nextDuration) {
+              return current;
+            }
 
-    if (didUpdate) {
-      setPlaybackStateByUri(await getAllPlaybackState());
-    }
-  }, []);
-
-  const startThumbnailHydration = useCallback((items: VideoItem[]): ThumbnailHydrationJob => {
-    let cancelled = false;
-    let runThumbnailUris: Set<string> | null = null;
-
-    const promise = (async () => {
-      const queuedVideos = items.filter((video) => {
-        if (thumbnailSourceByUriRef.current[video.uri] !== undefined || thumbnailJobUrisRef.current.has(video.uri)) {
-          return false;
+            return {
+              ...current,
+              [video.uri]: {
+                durationSeconds: nextDuration,
+                hasStartedPlayback: entry?.hasStartedPlayback ?? false,
+                positionSeconds: entry?.positionSeconds ?? 0,
+                updatedAt: entry?.updatedAt ?? Date.now(),
+              },
+            };
+          });
         }
-
-        thumbnailJobUrisRef.current.add(video.uri);
-        return true;
-      });
-
-      if (queuedVideos.length === 0) {
-        return;
-      }
-
-      runThumbnailUris = new Set(queuedVideos.map((video) => video.uri));
-
-      const retryCountsByUri = new Map<string, number>();
-      const queue = [...queuedVideos];
-
-      const runWorker = async () => {
-        while (!cancelled) {
-          const video = queue.shift();
-
-          if (!video) {
-            return;
-          }
-
-          let shouldReleaseJob = true;
-
-          try {
-            const cachedThumbnailUri = await getCachedThumbnailUri(video);
-
-            if (cachedThumbnailUri) {
-              if (!cancelled) {
-                setThumbnailSourceByUri((current) => ({
-                  ...current,
-                  [video.uri]: { uri: cachedThumbnailUri },
-                }));
-              }
-
-              retryCountsByUri.delete(video.uri);
-              continue;
-            }
-
-            const thumbnailUri = await generateThumbnailForVideo(
-              video,
-              playbackStateByUriRef.current[video.uri]?.durationSeconds,
-            );
-
-            if (!cancelled) {
-              setThumbnailSourceByUri((current) => ({
-                ...current,
-                [video.uri]: { uri: thumbnailUri },
-              }));
-            }
-
-            retryCountsByUri.delete(video.uri);
-          } catch {
-            const nextAttempt = (retryCountsByUri.get(video.uri) ?? 0) + 1;
-
-            if (!cancelled && nextAttempt < THUMBNAIL_HYDRATION_MAX_ATTEMPTS) {
-              retryCountsByUri.set(video.uri, nextAttempt);
-              queue.push(video);
-              shouldReleaseJob = false;
-              continue;
-            }
-
-            retryCountsByUri.delete(video.uri);
-
-            if (!cancelled) {
-              setThumbnailSourceByUri((current) => {
-                if (current[video.uri] === undefined) {
-                  return current;
-                }
-
-                const next = { ...current };
-                delete next[video.uri];
-                return next;
-              });
-            }
-          } finally {
-            if (shouldReleaseJob) {
-              thumbnailJobUrisRef.current.delete(video.uri);
-            }
-          }
-        }
-      };
-
-      await Promise.all(
-        Array.from({ length: Math.min(THUMBNAIL_HYDRATION_CONCURRENCY, queuedVideos.length) }, () => runWorker()),
-      );
-    })();
-
-    return {
-      cancel: () => {
-        cancelled = true;
-
-        runThumbnailUris?.forEach((uri) => {
-          thumbnailJobUrisRef.current.delete(uri);
-        });
       },
-      promise,
-    };
+    });
+
+    return handle.cancel;
   }, []);
 
   const refreshNetwork = useCallback(async () => {
@@ -416,104 +237,52 @@ export default function App() {
         Network.getIpAddressAsync().catch(() => null),
       ]);
 
-      setIpAddress(address && address !== '0.0.0.0' ? address : null);
+      // Only publish the IP when it can actually reach the upload server: a LAN
+      // connection over Wi-Fi or Ethernet. On cellular the address is unreachable
+      // from a computer, so showing it as the server URL would be misleading.
+      const isLanConnection =
+        networkState.isConnected &&
+        (networkState.type === Network.NetworkStateType.WIFI ||
+          networkState.type === Network.NetworkStateType.ETHERNET);
 
-      if (!networkState.isConnected) {
-        return;
-      }
-
-      if (networkState.type !== Network.NetworkStateType.WIFI && networkState.type !== Network.NetworkStateType.ETHERNET) {
-        return;
-      }
-
-      if (!address || address === '0.0.0.0') {
-        return;
-      }
-    } catch { }
-  }, []);
-
-  const getCleanupVideos = useCallback(async (item: LibraryItem): Promise<VideoItem[]> => {
-    if (item.kind === 'folder') {
-      return await listAllVideoItems(item.relativePath);
-    }
-
-    return item.kind === 'video' ? [item] : [];
-  }, []);
-
-  const probeExistingServer = useCallback(async (port: number): Promise<{ ok: boolean; reportedPort: number | null }> => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1500);
-
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/health`, {
-        method: 'GET',
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        return { ok: false, reportedPort: null };
-      }
-
-      const payload = (await response.json().catch(() => null)) as { ok?: boolean; port?: number } | null;
-      return {
-        ok: payload?.ok === true,
-        reportedPort: typeof payload?.port === 'number' && Number.isFinite(payload.port) ? payload.port : null,
-      };
+      setIpAddress(isLanConnection && address && address !== '0.0.0.0' ? address : null);
     } catch {
-      return { ok: false, reportedPort: null };
-    } finally {
-      clearTimeout(timeoutId);
+      setIpAddress(null);
     }
   }, []);
-
-  const adoptRunningServer = useCallback(
-    async (port: number) => {
-      setPortInput(String(port));
-      setActivePort(port);
-      setServerRunning(true);
-      setActivity(createUploadActivity('idle', `Server ready on port ${port}.`));
-      await refreshNetwork();
-    },
-    [refreshNetwork],
-  );
 
   const startServer = useCallback(
     async (port: number, configuredMaxParallelUploads = maxParallelUploadsRef.current) => {
       try {
         setActivity(createUploadActivity('idle', `Starting server on port ${port}...`));
 
-        const existingServer = await probeExistingServer(port);
-
-        if (existingServer.ok) {
-          await adoptRunningServer(existingServer.reportedPort ?? port);
-          return;
-        }
-
         await localUploadServer.start({
           maxParallelUploads: configuredMaxParallelUploads,
           port,
           onActivity: setActivity,
-          onLibraryChanged: refreshLibrary,
+          onLibraryChanged: async () => {
+            await refreshLibrary();
+            // Only a server-driven change (upload, browser delete/rename/move)
+            // triggers the full-library thumbnail pass.
+            setServerLibraryRevision((current) => current + 1);
+          },
         });
 
         const reportedPort = localUploadServer.getPort();
         const resolvedPort = reportedPort && reportedPort >= 1025 && reportedPort <= 65535 ? reportedPort : port;
 
-        await adoptRunningServer(resolvedPort);
+        setPortInput(String(resolvedPort));
+        setActivePort(resolvedPort);
+        setServerRunning(true);
+        setActivity(createUploadActivity('idle', `Server ready on port ${resolvedPort}.`));
+        await refreshNetwork();
       } catch (error) {
-        const existingAfterFailure = await probeExistingServer(port);
-
-        if (existingAfterFailure.ok) {
-          await adoptRunningServer(existingAfterFailure.reportedPort ?? port);
-          return;
-        }
-
         setActivePort(null);
         setServerRunning(false);
         setActivity(createUploadActivity('error', error instanceof Error ? error.message : 'Unable to start the server.'));
       }
     },
-    [adoptRunningServer, probeExistingServer, refreshLibrary],
+    [refreshLibrary, refreshNetwork],
   );
 
   const stopServer = useCallback(async () => {
@@ -536,21 +305,6 @@ export default function App() {
   }, [videos]);
 
   useEffect(() => {
-    setThumbnailSourceByUri((current) => {
-      const validUris = new Set(videos.map((video) => video.uri));
-      const nextEntries = Object.entries(current).filter(([uri]) => validUris.has(uri));
-
-      thumbnailJobUrisRef.current.forEach((uri) => {
-        if (!validUris.has(uri)) {
-          thumbnailJobUrisRef.current.delete(uri);
-        }
-      });
-
-      return nextEntries.length === Object.keys(current).length ? current : Object.fromEntries(nextEntries);
-    });
-  }, [videos]);
-
-  useEffect(() => {
     if (selectionMode && selectedCount === 0) {
       setSelectionMode(false);
     }
@@ -567,16 +321,12 @@ export default function App() {
 
     async function bootstrap() {
       try {
-        const settings = await getUploadSettings();
-        maxParallelUploadsRef.current = settings.maxParallelUploads;
-        localUploadServer.setMaxParallelUploads(settings.maxParallelUploads);
-
-        const [subtitleSettings, playbackSettings] = await Promise.all([getSubtitleSettings(), getPlaybackSettings()]);
+        const loadedSettings = await getSettings();
+        maxParallelUploadsRef.current = loadedSettings.maxParallelUploads;
+        localUploadServer.setMaxParallelUploads(loadedSettings.maxParallelUploads);
 
         if (isMounted) {
-          setMaxParallelUploads(settings.maxParallelUploads);
-          setSubtitleFontSize(subtitleSettings.subtitleFontSize);
-          setLongPressSpeedTenths(playbackSettings.longPressSpeedTenths);
+          setSettings(loadedSettings);
         }
 
         await ensureAppDirectories();
@@ -589,7 +339,7 @@ export default function App() {
 
         setLoading(false);
 
-        await startServer(DEFAULT_SERVER_PORT, settings.maxParallelUploads);
+        await startServer(DEFAULT_SERVER_PORT, loadedSettings.maxParallelUploads);
       } catch (error) {
         if (isMounted) {
           setActivity(createUploadActivity('error', error instanceof Error ? error.message : 'App startup failed.'));
@@ -609,6 +359,54 @@ export default function App() {
     };
   }, [refreshLibrary, refreshNetwork, startServer]);
 
+  // Deletes all artifacts (playback progress, cached thumbnail, in-memory
+  // thumbnail entry, session probe record) for a set of videos. Used when the
+  // videos themselves are being deleted.
+  const forgetVideoArtifacts = useCallback(async (cleanupVideos: VideoItem[]) => {
+    if (cleanupVideos.length === 0) {
+      return;
+    }
+
+    const uris = cleanupVideos.map((video) => video.uri);
+    await clearPlaybackProgressForUris(uris);
+    await Promise.all(cleanupVideos.map((video) => deleteThumbnailForVideo(video).catch(() => undefined)));
+    forgetProbedUris(uris);
+    setThumbnailUriByVideo((current) => {
+      const next = { ...current };
+
+      for (const uri of uris) {
+        delete next[uri];
+      }
+
+      return next;
+    });
+  }, []);
+
+  // Re-keys artifacts (playback progress, thumbnails, session probe records, and
+  // the in-memory thumbnail map) from old URIs to new ones after a rename/move,
+  // so a half-watched video keeps its position and thumbnail.
+  const relinkArtifacts = useCallback(async (oldVideos: VideoItem[], oldRootUri: string, newRootUri: string) => {
+    const moves = await relinkVideoArtifacts(oldVideos, oldRootUri, newRootUri);
+
+    if (moves.length === 0) {
+      return;
+    }
+
+    forgetProbedUris(moves.map((move) => move.oldUri));
+    setThumbnailUriByVideo((current) => {
+      const next = { ...current };
+
+      for (const { oldUri, newUri } of moves) {
+        if (oldUri in next) {
+          next[newUri] = next[oldUri];
+          delete next[oldUri];
+        }
+      }
+
+      return next;
+    });
+  }, []);
+
   const handleDeleteVideo = useCallback(
     (video: LibraryItem) => {
       Alert.alert(video.kind === 'folder' ? 'Delete folder?' : 'Delete file?', video.name, [
@@ -623,23 +421,10 @@ export default function App() {
             void (async () => {
               try {
                 const cleanupVideos = Array.from(
-                  new Map((await getCleanupVideos(video)).map((item) => [item.uri, item])).values(),
+                  new Map((await collectVideos(video)).map((item) => [item.uri, item])).values(),
                 );
 
-                if (cleanupVideos.length > 0) {
-                  await clearPlaybackProgressForUris(cleanupVideos.map((item) => item.uri));
-                  await Promise.all(cleanupVideos.map((item) => deleteThumbnailForVideo(item)));
-                  setThumbnailSourceByUri((current) => {
-                    const next = { ...current };
-
-                    for (const item of cleanupVideos) {
-                      delete next[item.uri];
-                    }
-
-                    return next;
-                  });
-                }
-
+                await forgetVideoArtifacts(cleanupVideos);
                 await deleteLibraryItem(video.uri);
                 await refreshLibrary();
               } catch (error) {
@@ -650,7 +435,7 @@ export default function App() {
         },
       ]);
     },
-    [getCleanupVideos, refreshLibrary],
+    [forgetVideoArtifacts, refreshLibrary],
   );
 
   const handlePlayVideo = useCallback(
@@ -694,29 +479,16 @@ export default function App() {
               try {
                 const targets = videos.filter((video) => selectedVideoUris.has(video.uri));
                 const cleanupVideos = Array.from(
-                  new Map((await Promise.all(targets.map((video) => getCleanupVideos(video)))).flat().map((video) => [video.uri, video])).values(),
+                  new Map((await Promise.all(targets.map((video) => collectVideos(video)))).flat().map((video) => [video.uri, video])).values(),
                 );
 
-                if (cleanupVideos.length > 0) {
-                  await clearPlaybackProgressForUris(cleanupVideos.map((video) => video.uri));
-                  await Promise.all(cleanupVideos.map((video) => deleteThumbnailForVideo(video)));
-                }
+                await forgetVideoArtifacts(cleanupVideos);
 
                 await Promise.all(
                   targets.map(async (video) => {
                     await deleteLibraryItem(video.uri);
                   }),
                 );
-
-                setThumbnailSourceByUri((current) => {
-                  const next = { ...current };
-
-                  for (const video of cleanupVideos) {
-                    delete next[video.uri];
-                  }
-
-                  return next;
-              });
 
               handleCancelSelection();
               await refreshLibrary();
@@ -727,7 +499,7 @@ export default function App() {
           },
         },
       ]);
-  }, [getCleanupVideos, handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
+  }, [forgetVideoArtifacts, handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
 
   const handleClearSelectedPlayback = useCallback(() => {
     if (selectedCount === 0) {
@@ -750,7 +522,7 @@ export default function App() {
               try {
                 const targets = videos.filter((video) => selectedVideoUris.has(video.uri));
                 const selectedVideos = Array.from(
-                  new Map((await Promise.all(targets.map((video) => getCleanupVideos(video)))).flat().map((video) => [video.uri, video])).values(),
+                  new Map((await Promise.all(targets.map((video) => collectVideos(video)))).flat().map((video) => [video.uri, video])).values(),
                 );
 
                 await clearPlaybackProgressForUris(selectedVideos.map((video) => video.uri));
@@ -764,28 +536,7 @@ export default function App() {
         },
       ],
     );
-  }, [getCleanupVideos, handleCancelSelection, refreshLibrary, selectedVideoUris, videos]);
-
-  // Rename/move change a video's URI, and playback progress + thumbnails are
-  // keyed by URI, so the old artifacts have to be cleared. Collected before the
-  // mutation while the old URIs still resolve.
-  const forgetPlaybackArtifacts = useCallback(async (cleanupVideos: VideoItem[]) => {
-    if (cleanupVideos.length === 0) {
-      return;
-    }
-
-    await clearPlaybackProgressForUris(cleanupVideos.map((video) => video.uri));
-    await Promise.all(cleanupVideos.map((video) => deleteThumbnailForVideo(video).catch(() => undefined)));
-    setThumbnailSourceByUri((current) => {
-      const next = { ...current };
-
-      for (const video of cleanupVideos) {
-        delete next[video.uri];
-      }
-
-      return next;
-    });
-  }, []);
+  }, [handleCancelSelection, refreshLibrary, selectedCount, selectedVideoUris, videos]);
 
   const handleCreateFolder = useCallback(
     (name: string) => {
@@ -816,13 +567,13 @@ export default function App() {
         try {
           const entryType = target.kind === 'folder' ? 'folder' : 'file';
           const cleanupVideos = Array.from(
-            new Map((await getCleanupVideos(target)).map((item) => [item.uri, item])).values(),
+            new Map((await collectVideos(target)).map((item) => [item.uri, item])).values(),
           );
 
           const renamed = await renameLibraryItem(target.relativePath, entryType, name);
 
           if (renamed.uri !== target.uri) {
-            await forgetPlaybackArtifacts(cleanupVideos);
+            await relinkArtifacts(cleanupVideos, target.uri, renamed.uri);
           }
 
           await refreshLibrary();
@@ -831,7 +582,7 @@ export default function App() {
         }
       })();
     },
-    [forgetPlaybackArtifacts, getCleanupVideos, refreshLibrary, renameTarget],
+    [refreshLibrary, relinkArtifacts, renameTarget],
   );
 
   const handleMoveSelected = useCallback(
@@ -852,13 +603,13 @@ export default function App() {
           try {
             const entryType = target.kind === 'folder' ? 'folder' : 'file';
             const cleanupVideos = Array.from(
-              new Map((await getCleanupVideos(target)).map((item) => [item.uri, item])).values(),
+              new Map((await collectVideos(target)).map((item) => [item.uri, item])).values(),
             );
 
             const moved = await moveLibraryItem(target.relativePath, entryType, destinationPath);
 
             if (moved.uri !== target.uri) {
-              await forgetPlaybackArtifacts(cleanupVideos);
+              await relinkArtifacts(cleanupVideos, target.uri, moved.uri);
             }
           } catch (error) {
             failures.push(`${target.name}: ${error instanceof Error ? error.message : 'move failed'}`);
@@ -873,7 +624,7 @@ export default function App() {
         }
       })();
     },
-    [forgetPlaybackArtifacts, getCleanupVideos, handleCancelSelection, refreshLibrary, selectedItems],
+    [handleCancelSelection, refreshLibrary, relinkArtifacts, selectedItems],
   );
 
   const handleToggleSelectAll = useCallback(() => {
@@ -885,121 +636,75 @@ export default function App() {
     setSelectedVideoUris(new Set(videos.map((video) => video.uri)));
   }, [allSelected, handleCancelSelection, videos]);
 
-  const handleSelectSubtitleFontSize = useCallback(
-    async (value: number) => {
-      const nextValue = clampSubtitleFontSize(value);
+  const updateSetting = useCallback(
+    async (key: SettingKey, value: number): Promise<boolean> => {
+      const nextValue = clampSetting(key, value);
 
-      if (nextValue === subtitleFontSize) {
+      if (nextValue === settings[key]) {
         return true;
       }
 
       try {
-        await saveSubtitleSettings({ subtitleFontSize: nextValue });
-        setSubtitleFontSize(nextValue);
+        const saved = await updateSettings({ [key]: nextValue });
+        setSettings(saved);
         return true;
       } catch (error) {
-        Alert.alert('Save failed', error instanceof Error ? error.message : 'Could not save subtitle settings.');
+        Alert.alert('Save failed', error instanceof Error ? error.message : 'Could not save settings.');
         return false;
       }
     },
-    [subtitleFontSize],
+    [settings],
   );
 
-  const handleSelectLongPressSpeed = useCallback(
-    async (value: number) => {
-      const nextValue = clampLongPressSpeedTenths(value);
-
-      if (nextValue === longPressSpeedTenths) {
-        return true;
-      }
-
-      try {
-        await savePlaybackSettings({ longPressSpeedTenths: nextValue });
-        setLongPressSpeedTenths(nextValue);
-        return true;
-      } catch (error) {
-        Alert.alert('Save failed', error instanceof Error ? error.message : 'Could not save playback settings.');
-        return false;
-      }
-    },
-    [longPressSpeedTenths],
-  );
-
-  const handleSelectMaxParallelUploads = useCallback(
-    async (value: number) => {
-      const nextValue = clampMaxParallelUploads(value);
-
-      if (nextValue === maxParallelUploads) {
-        return true;
-      }
-
-      try {
-        await saveUploadSettings({ maxParallelUploads: nextValue });
-        setMaxParallelUploads(nextValue);
-        return true;
-      } catch (error) {
-        Alert.alert('Save failed', error instanceof Error ? error.message : 'Could not save upload settings.');
-        return false;
-      }
-    },
-    [maxParallelUploads],
-  );
-
-  const handleOpenUploadConcurrencySettings = useCallback(() => {
-    navigationRef.navigate('UploadConcurrencySettings');
-  }, [navigationRef]);
-
+  // Effect A: probe the videos in the current folder as the user navigates.
   useEffect(() => {
     if (loading) {
       return;
     }
 
-    void hydrateMissingDurations(videoItems, playbackStateByUri);
-  }, [hydrateMissingDurations, loading, playbackStateByUri, videoItems]);
+    return hydrateCurrentFolder(videoItems);
+  }, [hydrateCurrentFolder, loading, videoItems]);
 
-  useEffect(() => {
-    if (loading) {
-      return;
-    }
-
-    const job = startThumbnailHydration(videoItems);
-    void job.promise;
-
-    return () => {
-      job.cancel();
-    };
-  }, [loading, playbackStateByUri, startThumbnailHydration, videoItems]);
-
+  // Effect B: at startup and whenever the server reports a library change, walk
+  // the whole library once — probing anything not yet seen this session — then
+  // prune thumbnails for videos that no longer exist.
   useEffect(() => {
     if (loading) {
       return;
     }
 
     let cancelled = false;
-    let job: ThumbnailHydrationJob | null = null;
+    let cancelHydration: (() => void) | null = null;
 
-    async function hydrateLibraryThumbnailsInBackground() {
+    async function hydrateLibraryInBackground() {
       const allVideos = await listAllVideoItems();
 
       if (cancelled) {
         return;
       }
 
-      job = startThumbnailHydration(allVideos);
-      await job.promise;
+      const handle = hydrateVideos(allVideos, { concurrency: THUMBNAIL_HYDRATION_CONCURRENCY }, {
+        onResult: (video, result) => {
+          if (result.thumbnailUri) {
+            setThumbnailUriByVideo((current) => ({ ...current, [video.uri]: result.thumbnailUri as string }));
+          }
+        },
+      });
+      cancelHydration = handle.cancel;
+      await handle.promise;
 
       if (!cancelled) {
         await pruneThumbnailCache(allVideos);
       }
     }
 
-    void hydrateLibraryThumbnailsInBackground();
+    void hydrateLibraryInBackground();
 
     return () => {
       cancelled = true;
-      job?.cancel();
+      cancelHydration?.();
     };
-  }, [libraryRevision, loading, startThumbnailHydration]);
+  }, [loading, serverLibraryRevision]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -1113,7 +818,7 @@ export default function App() {
                                 selectedCount={selectedCount}
                                 selectedVideoUris={selectedVideoUris}
                                 selectionMode={selectionMode}
-                                thumbnailSourceByUri={thumbnailSourceByUri}
+                                thumbnailUriByVideo={thumbnailUriByVideo}
                                 onCancelSelection={handleCancelSelection}
                                 onClearSelectedPlayback={handleClearSelectedPlayback}
                                 onDeleteSelected={handleDeleteSelected}
@@ -1210,7 +915,7 @@ export default function App() {
                                 maxParallelUploads={maxParallelUploads}
                                 onOpenLongPressSpeedSettings={() => navigationRef.navigate('LongPressSpeedSettings')}
                                 onOpenSubtitleSizeSettings={() => navigationRef.navigate('SubtitleSizeSettings')}
-                                onOpenUploadConcurrencySettings={handleOpenUploadConcurrencySettings}
+                                onOpenUploadConcurrencySettings={() => navigationRef.navigate('UploadConcurrencySettings')}
                                 subtitleFontSize={subtitleFontSize}
                               />
                             )}
@@ -1235,10 +940,13 @@ export default function App() {
                 <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
                   <View style={styles.screen}>
                     <View style={styles.contentArea}>
-                      <UploadConcurrencySettingsView
-                        maxParallelUploads={maxParallelUploads}
-                        onSelectMaxParallelUploads={async (value) => {
-                          const didSave = await handleSelectMaxParallelUploads(value);
+                      <OptionPickerView
+                        options={SETTING_LIMITS.maxParallelUploads.options}
+                        selectedValue={maxParallelUploads}
+                        subtitle="Choose how many files the browser uploader can send in parallel."
+                        title="Concurrent uploads"
+                        onSelect={async (value) => {
+                          const didSave = await updateSetting('maxParallelUploads', value);
 
                           if (didSave) {
                             navigation.goBack();
@@ -1264,12 +972,12 @@ export default function App() {
                   <View style={styles.screen}>
                     <View style={styles.contentArea}>
                       <OptionPickerView
-                        options={SUBTITLE_FONT_SIZE_OPTIONS}
+                        options={SETTING_LIMITS.subtitleFontSize.options}
                         selectedValue={subtitleFontSize}
                         subtitle="Choose how large subtitles appear during playback."
                         title="Subtitle size"
                         onSelect={async (value) => {
-                          const didSave = await handleSelectSubtitleFontSize(value);
+                          const didSave = await updateSetting('subtitleFontSize', value);
 
                           if (didSave) {
                             navigation.goBack();
@@ -1296,12 +1004,12 @@ export default function App() {
                     <View style={styles.contentArea}>
                       <OptionPickerView
                         formatLabel={(value) => `${(value / 10).toFixed(1)}\u00d7`}
-                        options={LONG_PRESS_SPEED_TENTHS_OPTIONS}
+                        options={SETTING_LIMITS.longPressSpeedTenths.options}
                         selectedValue={longPressSpeedTenths}
                         subtitle="Press and hold the video to temporarily play at this speed."
                         title="Hold-to-speed-up rate"
                         onSelect={async (value) => {
-                          const didSave = await handleSelectLongPressSpeed(value);
+                          const didSave = await updateSetting('longPressSpeedTenths', value);
 
                           if (didSave) {
                             navigation.goBack();
@@ -1393,7 +1101,7 @@ type LibraryViewProps = {
   selectedCount: number;
   selectedVideoUris: Set<string>;
   selectionMode: boolean;
-  thumbnailSourceByUri: Record<string, ThumbnailSource | null | undefined>;
+  thumbnailUriByVideo: Record<string, string>;
   videos: LibraryItem[];
   onDeleteVideo: (video: LibraryItem) => void;
   onLongPressVideo: (video: LibraryItem) => void;
@@ -1418,7 +1126,7 @@ function LibraryView({
   selectedCount,
   selectedVideoUris,
   selectionMode,
-  thumbnailSourceByUri,
+  thumbnailUriByVideo,
   videos,
   onDeleteVideo,
   onLongPressVideo,
@@ -1460,7 +1168,7 @@ function LibraryView({
         selected={selectedVideoUris.has(video.uri)}
         selectionMode={selectionMode}
         savedPositionSeconds={video.kind === 'video' ? playbackStateByUri[video.uri]?.positionSeconds ?? 0 : undefined}
-        thumbnailSource={video.kind === 'video' ? thumbnailSourceByUri[video.uri] : undefined}
+        thumbnailUri={video.kind === 'video' ? thumbnailUriByVideo[video.uri] : undefined}
         video={video}
         onLongPress={() => {
           if (selectionMode) {
@@ -1504,7 +1212,7 @@ function LibraryView({
       playbackStateByUri,
       selectedVideoUris,
       selectionMode,
-      thumbnailSourceByUri,
+      thumbnailUriByVideo,
     ],
   );
 
@@ -1748,42 +1456,6 @@ function SettingsView({
               <Text style={styles.settingNavigationChevron}>{'\u203A'}</Text>
             </View>
           </Pressable>
-        </View>
-      </Panel>
-    </ScrollView>
-  );
-}
-
-type UploadConcurrencySettingsViewProps = {
-  maxParallelUploads: number;
-  onSelectMaxParallelUploads: (value: number) => Promise<void> | void;
-};
-
-function UploadConcurrencySettingsView({ maxParallelUploads, onSelectMaxParallelUploads }: UploadConcurrencySettingsViewProps) {
-  return (
-    <ScrollView contentContainerStyle={styles.uploadContent} showsVerticalScrollIndicator={false}>
-      <Panel title="Concurrent uploads" subtitle="Choose how many files the browser uploader can send in parallel.">
-        <View style={styles.settingSection}>
-          <View style={styles.settingOptionGrid}>
-            {UPLOAD_CONCURRENCY_OPTIONS.map((value) => {
-              const selected = value === maxParallelUploads;
-
-              return (
-                <Pressable
-                  key={value}
-                  onPress={() => onSelectMaxParallelUploads(value)}
-                  style={({ pressed }) => [
-                    styles.settingOptionButton,
-                    selected && styles.settingOptionButtonSelected,
-                    pressed && styles.settingOptionButtonPressed,
-                  ]}
-                >
-                  <Text style={[styles.settingOptionText, selected && styles.settingOptionTextSelected]}>{value}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Text style={styles.supportText}>Refresh the browser upload page to apply changes.</Text>
         </View>
       </Panel>
     </ScrollView>

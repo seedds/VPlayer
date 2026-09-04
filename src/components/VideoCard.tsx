@@ -19,7 +19,7 @@ type VideoCardProps = {
   savedPositionSeconds?: number;
   selected: boolean;
   selectionMode: boolean;
-  thumbnailSource?: ImageProps['source'];
+  thumbnailUri?: string;
   video: LibraryItem;
 };
 
@@ -35,7 +35,7 @@ export function VideoCard({
   savedPositionSeconds,
   selected,
   selectionMode,
-  thumbnailSource,
+  thumbnailUri,
   video,
 }: VideoCardProps) {
   const swipeableRef = useRef<Swipeable | null>(null);
@@ -83,8 +83,8 @@ export function VideoCard({
       <Pressable onLongPress={onLongPress} onPress={onPlay} style={({ pressed }) => [styles.card, selected && styles.cardSelected, pressed && styles.cardPressed]}>
         <View style={styles.primaryAction}>
           <View style={styles.thumbnailWrap}>
-            {isVideo && thumbnailSource ? (
-              <Image contentFit="cover" source={thumbnailSource} style={styles.thumbnail as ImageProps['style']} />
+            {isVideo && thumbnailUri ? (
+              <Image contentFit="cover" source={{ uri: thumbnailUri }} style={styles.thumbnail as ImageProps['style']} />
             ) : isFolder ? (
               <View style={[styles.thumbnailPlaceholder, styles.folderThumbnailPlaceholder]}>
                 <FolderThumbnailIcon />

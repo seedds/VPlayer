@@ -29,12 +29,17 @@ export function PromptModal({
   visible,
 }: PromptModalProps) {
   const [value, setValue] = useState(initialValue);
+  // Applied once when the modal opens, then cleared on the first edit. Keeping a
+  // fixed `selection` prop makes RN re-select the base name after every
+  // keystroke, so renaming would only ever replace one character at a time.
+  const [activeSelection, setActiveSelection] = useState<{ start: number; end: number } | undefined>(selection);
 
   useEffect(() => {
     if (visible) {
       setValue(initialValue);
+      setActiveSelection(selection);
     }
-  }, [initialValue, visible]);
+  }, [initialValue, selection, visible]);
 
   const trimmed = value.trim();
 
@@ -46,7 +51,11 @@ export function PromptModal({
           {message ? <Text style={styles.message}>{message}</Text> : null}
           <TextInput
             autoFocus
-            onChangeText={setValue}
+            onChangeText={(nextValue) => {
+              setActiveSelection(undefined);
+              setValue(nextValue);
+            }}
+            onSelectionChange={() => setActiveSelection(undefined)}
             onSubmitEditing={() => {
               if (trimmed) {
                 onSubmit(trimmed);
@@ -55,7 +64,7 @@ export function PromptModal({
             placeholder={placeholder}
             placeholderTextColor="#8f857b"
             returnKeyType="done"
-            selection={selection}
+            selection={activeSelection}
             style={styles.input}
             value={value}
           />

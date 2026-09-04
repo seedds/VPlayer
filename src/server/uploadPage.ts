@@ -1,10 +1,17 @@
+import { clampSetting } from '../lib/settings';
+
 type UploadPageOptions = {
   chunkSize: number;
   maxParallelUploads: number;
 };
 
+// A chunk can be up to 1 MB and, with several in flight on slow Wi-Fi, can take
+// well over the short JSON-control timeout. Give chunk POSTs a long window so a
+// legitimately slow upload is not aborted, while keeping control calls snappy.
+const CHUNK_UPLOAD_TIMEOUT_MS = 60000;
+
 export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOptions): string {
-  const safeMaxParallelUploads = Number.isFinite(maxParallelUploads) ? Math.min(5, Math.max(1, Math.round(maxParallelUploads))) : 1;
+  const safeMaxParallelUploads = clampSetting('maxParallelUploads', maxParallelUploads);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -594,12 +601,22 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
         }
       }
 
-      function renderLibraryMessage(text, tone) {
+      function renderLibraryMessage(text) {
         libraryList.innerHTML = '';
         const message = document.createElement('div');
         message.className = 'library-message empty';
         message.textContent = text;
         libraryList.append(message);
+      }
+
+      function reportLibraryError(error, fallback, renderInList) {
+        const message = error && error.message ? error.message : fallback;
+        setPickerState(message);
+        setLibraryFeedback(message, 'error');
+
+        if (renderInList) {
+          renderLibraryMessage(message);
+        }
       }
 
       function splitPath(path) {
@@ -672,7 +689,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
         updateSelectionButtons();
       }
 
-      function updateBatchStatus(speedBytesPerSecond) {
+      function updateBatchStatus() {
         const totalSpeed = Array.from(activeUploadSpeeds.values()).reduce((sum, value) => sum + value, 0);
         batchProgress.textContent = completedFilesInBatch + '/' + totalFilesInBatch;
         batchSpeed.textContent = formatSpeed(totalSpeed);
@@ -703,7 +720,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
 
       function beginUploadActivity(card) {
         activeUploadSpeeds.set(card, 0);
-        updateBatchStatus(0);
+        updateBatchStatus();
         updateQueuePickerState();
       }
 
@@ -713,12 +730,12 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
         }
 
         activeUploadSpeeds.set(card, Math.max(0, speedBytesPerSecond || 0));
-        updateBatchStatus(0);
+        updateBatchStatus();
       }
 
       function endUploadActivity(card) {
         activeUploadSpeeds.delete(card);
-        updateBatchStatus(0);
+        updateBatchStatus();
         updateQueuePickerState();
       }
 
@@ -844,7 +861,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
           method: 'POST',
           headers,
           body: formData,
-        });
+        }, ${CHUNK_UPLOAD_TIMEOUT_MS});
       }
 
       function describeLibraryItem(item) {
@@ -916,12 +933,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
           button.textContent = entry.label;
           button.disabled = entry.path === currentPath;
           button.addEventListener('click', () => {
-            loadLibrary(entry.path).catch((error) => {
-              const message = error && error.message ? error.message : 'Unable to load folder.';
-              setPickerState(message);
-              setLibraryFeedback(message, 'error');
-              renderLibraryMessage(message, 'error');
-            });
+            loadLibrary(entry.path).catch((error) => reportLibraryError(error, 'Unable to load folder.', true));
           });
           breadcrumb.append(button);
         });
@@ -947,9 +959,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
           applyLibraryListing(response);
           setLibraryFeedback('Renamed to ' + response.item.name + '.', null);
         } catch (error) {
-          const message = error && error.message ? error.message : 'Rename failed.';
-          setPickerState(message);
-          setLibraryFeedback(message, 'error');
+          reportLibraryError(error, 'Rename failed.', false);
         }
       }
 
@@ -1056,12 +1066,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
           if (item.kind === 'folder') {
             row.classList.add('folder-item');
             row.addEventListener('click', () => {
-              loadLibrary(item.relativePath).catch((error) => {
-                const message = error && error.message ? error.message : 'Unable to open folder.';
-                setPickerState(message);
-                setLibraryFeedback(message, 'error');
-                renderLibraryMessage(message, 'error');
-              });
+              loadLibrary(item.relativePath).catch((error) => reportLibraryError(error, 'Unable to open folder.', true));
             });
           }
 
@@ -1092,7 +1097,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
         syncSelectedLibraryPaths(pathChanged);
         upButton.hidden = !currentPath;
         setLibraryFeedback(currentPath ? 'Current folder: ' + currentPath : 'Current folder: root', null);
-        renderLibrary(currentLibraryItems);
+        renderLibrary();
       }
 
       async function uploadFile(fileSpec, card) {
@@ -1174,7 +1179,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
             updateCard(nextUpload.card, 'Upload failed', 0, error.message || 'Unknown error');
           } finally {
             completedFilesInBatch += 1;
-            updateBatchStatus(0);
+            updateBatchStatus();
             updateQueuePickerState();
           }
         }
@@ -1201,12 +1206,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
           folderInput.value = '';
 
           if (pendingUploads.length === 0 && activeUploadSpeeds.size === 0) {
-            await loadLibrary(currentPath).catch((error) => {
-              const message = error && error.message ? error.message : 'Unable to load library.';
-              setPickerState(message);
-              setLibraryFeedback(message, 'error');
-              renderLibraryMessage(message, 'error');
-            });
+            await loadLibrary(currentPath).catch((error) => reportLibraryError(error, 'Unable to load library.', true));
           }
 
           queueRunning = false;
@@ -1244,7 +1244,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
         }
 
         totalFilesInBatch += files.length;
-        updateBatchStatus(0);
+        updateBatchStatus();
         updateQueuePickerState();
         await runUploadQueue();
       }
@@ -1321,20 +1321,10 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
         renderLibrary();
       });
       refreshButton.addEventListener('click', () => {
-        loadLibrary(currentPath).catch((error) => {
-          const message = error && error.message ? error.message : 'Unable to load library.';
-          setPickerState(message);
-          setLibraryFeedback(message, 'error');
-          renderLibraryMessage(message, 'error');
-        });
+        loadLibrary(currentPath).catch((error) => reportLibraryError(error, 'Unable to load library.', true));
       });
       upButton.addEventListener('click', () => {
-        loadLibrary(getParentPath(currentPath)).catch((error) => {
-          const message = error && error.message ? error.message : 'Unable to load library.';
-          setPickerState(message);
-          setLibraryFeedback(message, 'error');
-          renderLibraryMessage(message, 'error');
-        });
+        loadLibrary(getParentPath(currentPath)).catch((error) => reportLibraryError(error, 'Unable to load library.', true));
       });
       newFolderButton.addEventListener('click', () => {
         const enteredName = window.prompt('Folder name');
@@ -1355,11 +1345,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
             setLibraryFeedback('Created folder ' + name + '.', null);
             applyLibraryListing(response);
           })
-          .catch((error) => {
-            const message = error && error.message ? error.message : 'Unable to create folder.';
-            setPickerState(message);
-            setLibraryFeedback(message, 'error');
-          })
+          .catch((error) => reportLibraryError(error, 'Unable to create folder.', false))
           .then(() => {
             newFolderButton.disabled = false;
           }, () => {
@@ -1400,9 +1386,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
             null,
           );
         } catch (error) {
-          const message = error && error.message ? error.message : 'Move failed.';
-          setPickerState(message);
-          setLibraryFeedback(message, 'error');
+          reportLibraryError(error, 'Move failed.', false);
         } finally {
           movingSelection = false;
           updateSelectionButtons();
@@ -1451,9 +1435,7 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
             null,
           );
         } catch (error) {
-          const message = error && error.message ? error.message : 'Delete failed.';
-          setPickerState(message);
-          setLibraryFeedback(message, 'error');
+          reportLibraryError(error, 'Delete failed.', false);
         } finally {
           deletingSelection = false;
           updateSelectionButtons();
@@ -1524,27 +1506,15 @@ export function buildUploadPage({ chunkSize, maxParallelUploads }: UploadPageOpt
       });
 
       window.addEventListener('error', (event) => {
-        const message = (event && event.message) || 'Upload page crashed while loading.';
-        setPickerState(message);
-        setLibraryFeedback(message, 'error');
-        renderLibraryMessage(message, 'error');
+        reportLibraryError(event, 'Upload page crashed while loading.', true);
       });
 
       window.addEventListener('unhandledrejection', (event) => {
-        const reason = event && event.reason;
-        const message = reason && reason.message ? reason.message : 'Upload page request failed.';
-        setPickerState(message);
-        setLibraryFeedback(message, 'error');
-        renderLibraryMessage(message, 'error');
+        reportLibraryError(event && event.reason, 'Upload page request failed.', true);
       });
 
       setLibraryFeedback('Loading current folder...', null);
-      loadLibrary('').catch((error) => {
-        const message = error && error.message ? error.message : 'Unable to load library.';
-        setPickerState(message);
-        setLibraryFeedback(message, 'error');
-        renderLibraryMessage(message, 'error');
-      });
+      loadLibrary('').catch((error) => reportLibraryError(error, 'Unable to load library.', true));
     </script>
   </body>
 </html>`;

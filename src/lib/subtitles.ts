@@ -7,14 +7,23 @@ export type SubtitleCue = {
 };
 
 function parseTimestamp(input: string): number | null {
-  const match = input.trim().match(/^(\d{2}):(\d{2}):(\d{2})[,.](\d{3})$/);
+  // Accept 1- or 2-digit hours and 1-3 digit milliseconds, which some SRT
+  // exporters produce, instead of requiring a strict HH:MM:SS,mmm shape.
+  const match = input.trim().match(/^(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})$/);
 
   if (!match) {
     return null;
   }
 
   const [, hours, minutes, seconds, milliseconds] = match;
-  return (((Number(hours) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000) + Number(milliseconds);
+  const millisecondsValue = Number(milliseconds.padEnd(3, '0'));
+  return (((Number(hours) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000) + millisecondsValue;
+}
+
+// Strip the inline formatting tags SRT cues commonly carry (<i>, <b>, <u>,
+// <font ...>) so they are not rendered as literal text.
+function stripCueTags(text: string): string {
+  return text.replace(/<\/?(?:i|b|u|font)(?:\s[^>]*)?>/gi, '');
 }
 
 export function parseSrt(input: string): SubtitleCue[] {
@@ -42,7 +51,7 @@ export function parseSrt(input: string): SubtitleCue[] {
         return null;
       }
 
-      const text = lines.slice(timingLineIndex + 1).join('\n').trim();
+      const text = stripCueTags(lines.slice(timingLineIndex + 1).join('\n')).trim();
 
       if (!text) {
         return null;

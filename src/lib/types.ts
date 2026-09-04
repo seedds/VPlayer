@@ -47,7 +47,6 @@ export type UploadActivity = {
   message: string;
   updatedAt: number;
   activeUploads: ActiveUploadRow[];
-  fileName?: string;
   receivedBytes?: number;
   totalBytes?: number;
 };

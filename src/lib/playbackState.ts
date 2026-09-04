@@ -1,5 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
+import { getDocumentRoot } from './videoLibrary';
+
 export type PlaybackStateEntry = {
   durationSeconds?: number;
   hasStartedPlayback?: boolean;
@@ -13,11 +15,7 @@ let playbackStateCache: PlaybackStateMap | null = null;
 let playbackStateMutationQueue: Promise<void> = Promise.resolve();
 
 function getPlaybackStateFileUri(): string {
-  if (!FileSystem.documentDirectory) {
-    throw new Error('This device does not expose an app document directory.');
-  }
-
-  return `${FileSystem.documentDirectory}playback-state.json`;
+  return `${getDocumentRoot()}playback-state.json`;
 }
 
 async function loadPlaybackState(): Promise<PlaybackStateMap> {
@@ -144,6 +142,36 @@ export async function clearAllPlaybackProgress(): Promise<void> {
       ]),
     ),
   );
+}
+
+// Re-keys playback entries from old URIs to new ones, preserving position and
+// duration. Used when a rename/move changes a video's URI so a half-watched
+// video keeps its progress instead of being reset to "new".
+export async function movePlaybackState(pairs: ReadonlyArray<readonly [string, string]>): Promise<void> {
+  const moves = pairs.filter(([oldUri, newUri]) => oldUri !== newUri);
+
+  if (moves.length === 0) {
+    return;
+  }
+
+  await updatePlaybackState((state) => {
+    let didUpdate = false;
+    const nextState = { ...state };
+
+    for (const [oldUri, newUri] of moves) {
+      const entry = state[oldUri];
+
+      if (!entry) {
+        continue;
+      }
+
+      delete nextState[oldUri];
+      nextState[newUri] = entry;
+      didUpdate = true;
+    }
+
+    return didUpdate ? nextState : null;
+  });
 }
 
 export async function clearPlaybackProgressForUris(uris: Iterable<string>): Promise<void> {

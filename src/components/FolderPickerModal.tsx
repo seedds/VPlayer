@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { listLibraryItems } from '../lib/videoLibrary';
+import { getParentPath, listLibraryItems } from '../lib/videoLibrary';
 import type { FolderItem, LibraryItem } from '../lib/types';
 
 type FolderPickerModalProps = {
@@ -12,20 +12,6 @@ type FolderPickerModalProps = {
   onPick: (destinationPath: string | null) => void;
   visible: boolean;
 };
-
-function getParentPath(path: string | null): string | null {
-  if (!path) {
-    return null;
-  }
-
-  const segments = path.split('/').filter(Boolean);
-
-  if (segments.length <= 1) {
-    return null;
-  }
-
-  return segments.slice(0, -1).join('/');
-}
 
 export function FolderPickerModal({ movingItems, onCancel, onPick, visible }: FolderPickerModalProps) {
   const [browsePath, setBrowsePath] = useState<string | null>(null);

@@ -1,10 +1,10 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import { createVideoPlayer } from 'expo-video';
 
-import type { VideoThumbnail } from 'expo-video';
+import type { VideoPlayer, VideoThumbnail } from 'expo-video';
 
 import type { VideoItem } from './types';
+import { getDocumentRoot } from './videoLibrary';
 
 export const THUMBNAIL_TIME_SECONDS = 10;
 export const THUMBNAIL_MAX_WIDTH = 240;
@@ -17,14 +17,6 @@ function getThumbnailCandidateTimes(durationSeconds?: number): number[] {
       : THUMBNAIL_TIME_SECONDS;
 
   return preferredTime > 0 ? [preferredTime, 0] : [0];
-}
-
-function getDocumentRoot(): string {
-  if (!FileSystem.documentDirectory) {
-    throw new Error('This device does not expose an app document directory.');
-  }
-
-  return FileSystem.documentDirectory;
 }
 
 export function getThumbnailDirectory(): string {
@@ -86,28 +78,30 @@ export async function persistThumbnail(video: VideoItem, thumbnail: VideoThumbna
   return targetUri;
 }
 
-export async function generateThumbnailForVideo(video: VideoItem, durationSeconds?: number): Promise<string> {
-  const player = createVideoPlayer(video.uri);
+// Captures a thumbnail from an already-created (and loaded) player. The caller
+// owns the player's lifecycle, so this can share one player with duration
+// probing instead of opening a second one per video.
+export async function generateThumbnailWithPlayer(
+  player: VideoPlayer,
+  video: VideoItem,
+  durationSeconds?: number,
+): Promise<string> {
   let lastError: unknown = null;
 
-  try {
-    for (const time of getThumbnailCandidateTimes(durationSeconds)) {
-      try {
-        const thumbnails = await player.generateThumbnailsAsync([time], {
-          maxHeight: THUMBNAIL_MAX_HEIGHT,
-          maxWidth: THUMBNAIL_MAX_WIDTH,
-        });
-        const thumbnail = thumbnails[0] ?? null;
+  for (const time of getThumbnailCandidateTimes(durationSeconds)) {
+    try {
+      const thumbnails = await player.generateThumbnailsAsync([time], {
+        maxHeight: THUMBNAIL_MAX_HEIGHT,
+        maxWidth: THUMBNAIL_MAX_WIDTH,
+      });
+      const thumbnail = thumbnails[0] ?? null;
 
-        if (thumbnail) {
-          return await persistThumbnail(video, thumbnail);
-        }
-      } catch (error) {
-        lastError = error;
+      if (thumbnail) {
+        return await persistThumbnail(video, thumbnail);
       }
+    } catch (error) {
+      lastError = error;
     }
-  } finally {
-    player.release();
   }
 
   if (lastError instanceof Error) {
@@ -115,6 +109,34 @@ export async function generateThumbnailForVideo(video: VideoItem, durationSecond
   }
 
   throw new Error('Thumbnail generation returned no image.');
+}
+
+// Renames a cached thumbnail so it survives a video's URI change. The cache key
+// includes the URI, so the target file name differs; on any failure the caller
+// should fall back to clearing (the thumbnail will simply be regenerated).
+export async function moveThumbnail(oldVideo: VideoItem, newVideo: VideoItem): Promise<boolean> {
+  await ensureThumbnailDirectory();
+
+  const fromUri = getThumbnailTargetUri(oldVideo);
+  const toUri = getThumbnailTargetUri(newVideo);
+
+  if (fromUri === toUri) {
+    return true;
+  }
+
+  const info = await FileSystem.getInfoAsync(fromUri);
+
+  if (!info.exists) {
+    return false;
+  }
+
+  try {
+    await FileSystem.deleteAsync(toUri, { idempotent: true }).catch(() => undefined);
+    await FileSystem.moveAsync({ from: fromUri, to: toUri });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function deleteThumbnailForVideo(video: VideoItem): Promise<void> {

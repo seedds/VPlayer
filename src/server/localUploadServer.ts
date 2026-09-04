@@ -1,23 +1,25 @@
 import { File } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
+import { ConfigServer, type HttpRequest, type HttpResponse, type ServerConfig } from 'react-native-nitro-http-server';
 
-import type { ActiveUploadRow, LibraryItem, UploadActivity, UploadStatus, VideoItem } from '../lib/types';
-import { clampMaxParallelUploads, DEFAULT_MAX_PARALLEL_UPLOADS } from '../lib/uploadSettings';
+import type { ActiveUploadRow, LibraryItem, UploadActivity, UploadStatus } from '../lib/types';
+import { clampSetting, SETTING_LIMITS } from '../lib/settings';
 import { clearPlaybackProgressForUris } from '../lib/playbackState';
 import {
   clearTempUploads,
+  collectVideos,
   createLibraryFolder,
   createUploadTarget,
   deleteLibraryItem,
   ensureAppDirectories,
   getLibraryItem,
-  listAllVideoItems,
   listLibraryItems,
   moveLibraryItem,
   normalizeLibraryDirectoryPath,
   renameLibraryItem,
 } from '../lib/videoLibrary';
 import { deleteThumbnailForVideo } from '../lib/videoThumbnails';
+import { relinkVideoArtifacts } from '../lib/videoArtifacts';
 import { buildUploadPage } from './uploadPage';
 
 export const DEFAULT_SERVER_PORT = 8081;
@@ -40,40 +42,38 @@ type StartServerOptions = {
   onLibraryChanged?: () => Promise<void> | void;
 };
 
-type NitroRequestLike = {
-  body?: string;
-  headers: Record<string, string>;
-  method: string;
-  path: string;
-};
-
-type NitroResponseLike = {
-  body?: ArrayBuffer | string;
-  headers?: Record<string, string>;
-  statusCode: number;
-};
-
-type ConfigServerLike = {
-  port: number;
-  start: (
-    port: number,
-    handler: (request: NitroRequestLike) => Promise<NitroResponseLike> | NitroResponseLike,
-    config: unknown,
-    host?: string,
-  ) => Promise<number>;
-  stop: () => Promise<void>;
-};
-
 const CHUNK_SIZE = 1024 * 1024;
 
-function getUploadPluginTempDir(): string {
+function getUploadPluginTempDirUri(): string {
   const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
 
   if (!baseDir) {
     throw new Error('This device does not expose an app storage directory.');
   }
 
-  return `${baseDir}nitro-upload-temp/`.replace(/^file:\/\//, '').replace(/\/$/, '');
+  return `${baseDir}nitro-upload-temp/`;
+}
+
+function getUploadPluginTempDir(): string {
+  return getUploadPluginTempDirUri().replace(/^file:\/\//, '').replace(/\/$/, '');
+}
+
+// The upload plugin writes each received chunk to this directory. Rejected chunks
+// (bad session, wrong order, size mismatch) are deleted inline, but a crash can
+// still orphan files here, so it is swept clean when the server starts.
+async function clearNitroUploadTemp(): Promise<void> {
+  const directoryUri = getUploadPluginTempDirUri();
+  const info = await FileSystem.getInfoAsync(directoryUri);
+
+  if (!info.exists || !info.isDirectory) {
+    return;
+  }
+
+  const entries = await FileSystem.readDirectoryAsync(directoryUri);
+
+  await Promise.all(
+    entries.map((entry) => FileSystem.deleteAsync(`${directoryUri}${entry}`, { idempotent: true }).catch(() => undefined)),
+  );
 }
 
 function normalizeFileUri(path: string): string {
@@ -137,7 +137,7 @@ function readHeaderNumber(headers: Record<string, string>, key: string): number 
   return parsed;
 }
 
-function htmlResponse(body: string): NitroResponseLike {
+function htmlResponse(body: string): HttpResponse {
   return {
     statusCode: 200,
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -145,7 +145,7 @@ function htmlResponse(body: string): NitroResponseLike {
   };
 }
 
-function jsonResponse(body: object, statusCode = 200): NitroResponseLike {
+function jsonResponse(body: object, statusCode = 200): HttpResponse {
   return {
     statusCode,
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -189,9 +189,9 @@ class LocalUploadServer {
 
   private port: number | null = null;
 
-  private server: ConfigServerLike | null = null;
+  private server: ConfigServer | null = null;
 
-  private maxParallelUploads = DEFAULT_MAX_PARALLEL_UPLOADS;
+  private maxParallelUploads = SETTING_LIMITS.maxParallelUploads.default;
 
   private uploads = new Map<string, UploadSession>();
 
@@ -204,11 +204,11 @@ class LocalUploadServer {
   }
 
   setMaxParallelUploads(maxParallelUploads: number): void {
-    this.maxParallelUploads = clampMaxParallelUploads(maxParallelUploads);
+    this.maxParallelUploads = clampSetting('maxParallelUploads', maxParallelUploads);
   }
 
   async start({ port, onActivity, onLibraryChanged, maxParallelUploads }: StartServerOptions): Promise<void> {
-    this.maxParallelUploads = clampMaxParallelUploads(maxParallelUploads);
+    this.maxParallelUploads = clampSetting('maxParallelUploads', maxParallelUploads);
 
     if (this.server && this.port === port) {
       this.onActivity = onActivity;
@@ -220,19 +220,20 @@ class LocalUploadServer {
     await this.stop();
     await ensureAppDirectories();
     await clearTempUploads();
+    await clearNitroUploadTemp();
 
     this.onActivity = onActivity;
     this.onLibraryChanged = onLibraryChanged;
 
-    const { ConfigServer } = require('react-native-nitro-http-server') as typeof import('react-native-nitro-http-server');
-    const nextServer = new ConfigServer() as ConfigServerLike;
+    const nextServer = new ConfigServer();
+    const serverConfig: ServerConfig = {
+      mounts: [{ type: 'upload', path: '/upload/chunk', temp_dir: getUploadPluginTempDir() }],
+      verbose: 'error',
+    };
     const actualPort = await nextServer.start(
       port,
-      (request: NitroRequestLike) => this.handleRequest(request),
-      {
-        mounts: [{ type: 'upload', path: '/upload/chunk', temp_dir: getUploadPluginTempDir() }],
-        verbose: 'error',
-      },
+      (request: HttpRequest) => this.handleRequest(request),
+      serverConfig,
       '0.0.0.0',
     );
 
@@ -248,6 +249,8 @@ class LocalUploadServer {
   }
 
   async stop(): Promise<void> {
+    const wasRunning = this.server !== null;
+
     if (this.server) {
       await this.server.stop();
       this.server = null;
@@ -261,7 +264,11 @@ class LocalUploadServer {
       activeUploads.map((upload) => FileSystem.deleteAsync(upload.tempUri, { idempotent: true }).catch(() => undefined)),
     );
 
-    this.emitActivity('stopped', 'Server stopped.');
+    // start() calls stop() first; only report a stop when something was actually
+    // running, so a normal start does not flash "Server stopped." at the user.
+    if (wasRunning) {
+      this.emitActivity('stopped', 'Server stopped.');
+    }
   }
 
   private emit(activity: Omit<UploadActivity, 'updatedAt'>): void {
@@ -308,7 +315,7 @@ class LocalUploadServer {
     this.emit(this.buildActivity(statusWhenIdle, messageWhenIdle));
   }
 
-  private async handleRequest(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleRequest(request: HttpRequest): Promise<HttpResponse> {
     try {
       const requestUrl = parseRequestUrl(request.path);
       const pathname = requestUrl.pathname;
@@ -372,7 +379,7 @@ class LocalUploadServer {
     }
   }
 
-  private async handleInit(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleInit(request: HttpRequest): Promise<HttpResponse> {
     try {
       const body = parseJsonBody(request.body);
       const relativePath = readOptionalString(body.relativePath) ?? readString(body.fileName, 'fileName');
@@ -409,7 +416,7 @@ class LocalUploadServer {
     }
   }
 
-  private async handleList(requestUrl: URL): Promise<NitroResponseLike> {
+  private async handleList(requestUrl: URL): Promise<HttpResponse> {
     try {
       const listing = await serializeLibraryListing(readOptionalString(requestUrl.searchParams.get('path')));
 
@@ -419,7 +426,7 @@ class LocalUploadServer {
     }
   }
 
-  private async handleCreateFolder(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleCreateFolder(request: HttpRequest): Promise<HttpResponse> {
     try {
       const body = parseJsonBody(request.body);
       const parentPath = normalizeLibraryDirectoryPath(readOptionalString(body.parentPath));
@@ -439,16 +446,12 @@ class LocalUploadServer {
     }
   }
 
-  private async handleDelete(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleDelete(request: HttpRequest): Promise<HttpResponse> {
     try {
       const body = parseJsonBody(request.body);
       const relativePath = readString(body.relativePath, 'relativePath');
-      const entryType = readString(body.entryType, 'entryType');
+      const entryType = this.readEntryType(body.entryType);
       const currentPath = normalizeLibraryDirectoryPath(readOptionalString(body.currentPath));
-
-      if (entryType !== 'file' && entryType !== 'folder') {
-        throw new Error('Invalid entryType.');
-      }
 
       const target = await getLibraryItem(relativePath, entryType);
 
@@ -456,7 +459,7 @@ class LocalUploadServer {
         throw new Error('Library item not found.');
       }
 
-      const videosToCleanup = target.kind === 'folder' ? await listAllVideoItems(target.relativePath) : target.kind === 'video' ? [target] : [];
+      const videosToCleanup = await collectVideos(target);
 
       if (videosToCleanup.length > 0) {
         await clearPlaybackProgressForUris(videosToCleanup.map((video) => video.uri));
@@ -476,17 +479,6 @@ class LocalUploadServer {
     }
   }
 
-  private async getPlaybackArtifactVideos(target: LibraryItem): Promise<VideoItem[]> {
-    return target.kind === 'folder' ? await listAllVideoItems(target.relativePath) : target.kind === 'video' ? [target] : [];
-  }
-
-  private async cleanupPlaybackArtifacts(videosToCleanup: VideoItem[]): Promise<void> {
-    if (videosToCleanup.length > 0) {
-      await clearPlaybackProgressForUris(videosToCleanup.map((video) => video.uri));
-      await Promise.all(videosToCleanup.map((video) => deleteThumbnailForVideo(video).catch(() => undefined)));
-    }
-  }
-
   private readEntryType(input: unknown): 'file' | 'folder' {
     const entryType = readString(input, 'entryType');
 
@@ -497,7 +489,7 @@ class LocalUploadServer {
     return entryType;
   }
 
-  private async handleRename(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleRename(request: HttpRequest): Promise<HttpResponse> {
     try {
       const body = parseJsonBody(request.body);
       const relativePath = readString(body.relativePath, 'relativePath');
@@ -510,11 +502,11 @@ class LocalUploadServer {
         throw new Error('Library item not found.');
       }
 
-      const videosToCleanup = await this.getPlaybackArtifactVideos(target);
+      const videosToRelink = await collectVideos(target);
       const renamed = await renameLibraryItem(target.relativePath, entryType, name);
 
       if (renamed.uri !== target.uri) {
-        await this.cleanupPlaybackArtifacts(videosToCleanup);
+        await relinkVideoArtifacts(videosToRelink, target.uri, renamed.uri);
       }
 
       this.emitActivity('idle', `Renamed ${target.name} to ${renamed.name}`);
@@ -530,7 +522,7 @@ class LocalUploadServer {
     }
   }
 
-  private async handleMove(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleMove(request: HttpRequest): Promise<HttpResponse> {
     try {
       const body = parseJsonBody(request.body);
       const currentPath = normalizeLibraryDirectoryPath(readOptionalString(body.currentPath));
@@ -557,11 +549,11 @@ class LocalUploadServer {
           throw new Error('Library item not found.');
         }
 
-        const videosToCleanup = await this.getPlaybackArtifactVideos(target);
+        const videosToRelink = await collectVideos(target);
         const moved = await moveLibraryItem(target.relativePath, entryType, destinationPath || null);
 
         if (moved.uri !== target.uri) {
-          await this.cleanupPlaybackArtifacts(videosToCleanup);
+          await relinkVideoArtifacts(videosToRelink, target.uri, moved.uri);
           movedCount += 1;
         }
       }
@@ -579,9 +571,19 @@ class LocalUploadServer {
     }
   }
 
-  private async handleChunk(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleChunk(request: HttpRequest): Promise<HttpResponse> {
+    const headers = normalizeHeaders(request.headers);
+    // Read the plugin-written chunk path up front so it can be deleted on every
+    // exit path, not just success: a rejected chunk would otherwise leak the file.
+    const uploadedChunkFile = (() => {
+      try {
+        return new File(normalizeFileUri(readHeader(headers, 'x-uploaded-file-path')));
+      } catch {
+        return null;
+      }
+    })();
+
     try {
-      const headers = normalizeHeaders(request.headers);
       const uploadId = readHeader(headers, 'x-upload-id');
       const chunkIndex = readHeaderNumber(headers, 'x-chunk-index');
       const totalChunks = readHeaderNumber(headers, 'x-total-chunks');
@@ -604,10 +606,7 @@ class LocalUploadServer {
         throw new Error(`Unexpected chunk order. Expected chunk ${session.expectedChunkIndex}.`);
       }
 
-      const uploadedFilePath = readHeader(headers, 'x-uploaded-file-path');
-      const uploadedChunkFile = new File(normalizeFileUri(uploadedFilePath));
-
-      if (!uploadedChunkFile.exists) {
+      if (!uploadedChunkFile?.exists) {
         throw new Error('Uploaded chunk file missing.');
       }
 
@@ -625,7 +624,6 @@ class LocalUploadServer {
       tempFile.write(chunkBytes, { append: session.receivedBytes > 0 });
       session.receivedBytes += chunkBytes.byteLength;
       session.expectedChunkIndex += 1;
-      uploadedChunkFile.delete();
 
       this.emitActivity('receiving', `Uploading ${session.fileName}`);
 
@@ -636,10 +634,18 @@ class LocalUploadServer {
       });
     } catch (error) {
       return jsonResponse({ message: getErrorMessage(error) }, 400);
+    } finally {
+      try {
+        if (uploadedChunkFile?.exists) {
+          uploadedChunkFile.delete();
+        }
+      } catch {
+        // The plugin temp dir is swept on the next start(); ignore delete races.
+      }
     }
   }
 
-  private async handleComplete(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleComplete(request: HttpRequest): Promise<HttpResponse> {
     try {
       const body = parseJsonBody(request.body);
       const uploadId = readString(body.uploadId, 'uploadId');
@@ -678,7 +684,7 @@ class LocalUploadServer {
     }
   }
 
-  private async handleCancel(request: NitroRequestLike): Promise<NitroResponseLike> {
+  private async handleCancel(request: HttpRequest): Promise<HttpResponse> {
     try {
       const body = parseJsonBody(request.body);
       const uploadId = readString(body.uploadId, 'uploadId');

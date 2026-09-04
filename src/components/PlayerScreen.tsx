@@ -391,7 +391,10 @@ export function PlayerScreen({
     return () => {
       cancelled = true;
     };
-  }, [player, video]);
+    // Keyed on the video's identity fields, not the object reference: a library
+    // refresh rebuilds an equal `video` object, and depending on it would reload
+    // and re-parse the SRT on every refresh while playing.
+  }, [player, video.uri, video.parentPath, video.name]);
 
   useEffect(() => {
     const shouldAutoplay = () => appStateRef.current === 'active' && appHasFocusRef.current && !playbackInterruptedRef.current;
@@ -465,15 +468,25 @@ export function PlayerScreen({
     };
   }, [player, video.uri]);
 
+  // Persist and release exactly once, on unmount. Keying this on the player alone
+  // (never the orientation prop) guarantees the player is not released while the
+  // screen is still open.
+  useEffect(() => {
+    return () => {
+      persistPosition(activeVideoUriRef.current, player.currentTime, true);
+      player.release();
+    };
+  }, [player]);
+
+  // Orientation is a separate concern: lock landscape on open, restore the
+  // caller's lock on close, without touching the player lifecycle.
   useEffect(() => {
     void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
 
     return () => {
-      persistPosition(activeVideoUriRef.current, player.currentTime, true);
       void ScreenOrientation.lockAsync(exitOrientationLock);
-      player.release();
     };
-  }, [exitOrientationLock, player]);
+  }, [exitOrientationLock]);
 
   function handleClose() {
     persistPosition(video.uri, player.currentTime, true);
